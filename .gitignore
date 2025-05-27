@@ -1,6 +1,14 @@
-# Environment variables
+# Environment variables and sensitive data
 .env
-.env.local
+.env.*
+!.env.example
+config/credentials.py
+*.pem
+*.key
+*credentials*
+*secret*
+*password*
+*api_key*
 
 # Python virtual environment
 venv/
