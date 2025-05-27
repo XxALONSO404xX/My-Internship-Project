@@ -55,12 +55,12 @@ class Settings(BaseSettings):
     CORS_ALLOW_HEADERS: List[str] = ["Content-Type", "Authorization", "X-Requested-With"]
     
     # Email settings
-    SMTP_SERVER: str = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+    SMTP_SERVER: str = os.getenv('SMTP_SERVER', '')
     SMTP_PORT: int = int(os.getenv('SMTP_PORT', '587'))
-    SMTP_USERNAME: str = os.getenv('SMTP_USERNAME', 'eduanouar@gmail.com')
-    SMTP_PASSWORD: str = os.getenv('SMTP_PASSWORD', 'njsogkqauemargyy')
+    SMTP_USERNAME: str = os.getenv('SMTP_USERNAME', '')
+    SMTP_PASSWORD: str = os.getenv('SMTP_PASSWORD', '')
     SMTP_USE_TLS: bool = True
-    EMAIL_FROM_ADDRESS: str = os.getenv('EMAIL_FROM_ADDRESS', 'eduanouar@gmail.com')
+    EMAIL_FROM_ADDRESS: str = os.getenv('EMAIL_FROM_ADDRESS', '')
     EMAIL_FROM_NAME: str = os.getenv('EMAIL_FROM_NAME', 'IoT Platform')
     FRONTEND_URL: str = os.getenv('FRONTEND_URL', 'http://localhost:3000')
     
