@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 
-from app.models.base import Base
+from app.models.database import Base
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ from typing import Dict, List, Any, Optional
 
 from app.api.schemas import ResponseModel
 from app.models.database import get_db
-from app.services.group_vulnerability_service import create_group_vulnerability_service, GroupVulnerabilityService
+from app.services.group_management_service import create_group_vulnerability_service, GroupVulnerabilityService
 from app.api.deps import get_current_client
 
 router = APIRouter()
@@ -73,33 +73,11 @@ async def get_group_vulnerability_dashboard(
     Returns an overview of vulnerability statistics for all groups,
     sorted by risk score (highest risk first).
     """
-    # This would be implemented to fetch vulnerability data for all groups
-    # For now, returning a placeholder
+    # Get dashboard data from the service
+    dashboard_data = await service.get_vulnerability_dashboard(limit=limit)
+    
     return {
         "status": "success",
-        "data": {
-            "groups_with_vulnerabilities": 3,
-            "total_groups": 10,
-            "highest_risk_groups": [
-                {
-                    "group_id": 1,
-                    "group_name": "Living Room",
-                    "risk_score": 8.5,
-                    "vulnerability_count": 12
-                },
-                {
-                    "group_id": 3,
-                    "group_name": "Security Cameras",
-                    "risk_score": 7.2,
-                    "vulnerability_count": 8
-                }
-            ],
-            "vulnerability_distribution": {
-                "critical": 5,
-                "high": 15,
-                "medium": 23,
-                "low": 42
-            }
-        },
+        "data": dashboard_data,
         "message": "Group vulnerability dashboard data"
     }

@@ -8,7 +8,7 @@ import ipaddress
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
-from app.services.device_scanner import create_device_scanner
+from app.services.device_management_service import create_device_scanner
 from app.api.schemas import SystemInfo, NetworkInterface, Response
 
 router = APIRouter()

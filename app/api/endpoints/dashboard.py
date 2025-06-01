@@ -9,7 +9,7 @@ from app.models.database import get_db
 from app.models.device import Device
 from app.models.activity import Activity
 from app.models.firmware import FirmwareUpdate
-from app.services.device_service import DeviceService
+from app.services.device_management_service import DeviceService
 from app.services.activity_service import ActivityService
 from app.api.deps import get_current_client
 

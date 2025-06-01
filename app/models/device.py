@@ -58,17 +58,14 @@ class Device(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Firmware-related fields
-    firmware_update_support = Column(Boolean, default=True)
-    current_firmware_id = Column(String(36), ForeignKey("firmware.id", ondelete="SET NULL"), nullable=True)
-    last_firmware_check = Column(DateTime, nullable=True)
-    firmware_auto_update = Column(Boolean, default=False)
+    # Simplified firmware-related fields
+    firmware_version = Column(String(100))  # String representation of firmware version
+    current_firmware_id = Column(String(36), ForeignKey("firmware.id", ondelete="SET NULL"), nullable=True)  # Reference to firmware record if available
     
     # Relationships
     groups = relationship("Group", secondary="device_groups", back_populates="devices")
     sensor_readings = relationship("SensorReading", back_populates="device", cascade="all, delete-orphan")
     firmware_updates = relationship("FirmwareUpdate", back_populates="device", cascade="all, delete-orphan")
-    firmware_history = relationship("DeviceFirmwareHistory", back_populates="device", cascade="all, delete-orphan")
     current_firmware = relationship("Firmware", foreign_keys=[current_firmware_id])
     
     def __repr__(self):
@@ -77,7 +74,7 @@ class Device(Base):
     def to_dict(self) -> Dict[str, Any]:
         """Convert device to dictionary for API responses"""
         return {
-            "id": self.id,
+            "id": self.hash_id,
             "name": self.name,
             "ip_address": self.ip_address,
             "mac_address": self.mac_address,
@@ -95,7 +92,8 @@ class Device(Base):
             "discovery_method": self.discovery_method,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
-            "group_ids": [group.id for group in self.groups] if self.groups else []
+            # Don't include group_ids to avoid async loading issues
+            "group_ids": []
         }
     
     def to_dict_with_groups(self) -> Dict[str, Any]:

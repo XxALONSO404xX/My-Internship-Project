@@ -1,18 +1,35 @@
-"""Firmware API endpoints for IoT platform"""
+"""
+Firmware Management API for IoT Platform
+-----------------------------------------
+This module consolidates all firmware-related endpoints including:
+- Firmware CRUD operations (create, read, update, delete)
+- Firmware status checking and reporting
+- Firmware update operations
+- Vulnerability remediation through firmware updates
+"""
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
+from app.models.device import Device
+from app.models.firmware import Firmware
+from app.services.device_management_service import DeviceService
 from app.services.firmware_service import FirmwareService
-from app.services.device_service import DeviceService
-from app.services.notification_service import NotificationService
+from app.services.security_service import VulnerabilityService
+from app.utils.vulnerability_utils import vulnerability_manager
 from app.api import schemas
 from app.api.deps import get_current_client
+from app.utils.notification_helper import NotificationHelper
 
 router = APIRouter()
 
-@router.get("/", response_model=List[schemas.FirmwareResponse])
+#
+# ===== FIRMWARE MANAGEMENT ENDPOINTS =====
+#
+
+@router.get("/", response_model=List[Dict[str, Any]])
 async def list_firmware(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
@@ -27,34 +44,39 @@ async def list_firmware(
     if device_type and firmware_list:
         firmware_list = [fw for fw in firmware_list if fw.device_type == device_type]
     
-    return firmware_list
+    return [fw.to_dict() for fw in firmware_list]
 
-@router.post("/", response_model=schemas.FirmwareResponse, status_code=201)
+@router.post("/", response_model=Dict[str, Any], status_code=201)
 async def create_firmware(
-    firmware: schemas.FirmwareCreate,
+    firmware: Dict[str, Any],
     db: AsyncSession = Depends(get_db),
-    current_user: Dict[str, Any] = Depends(get_current_client)
+    current_client: Dict[str, Any] = Depends(get_current_client)
 ):
-    """Create new firmware"""
+    """Create new firmware
+    
+    Required fields:
+    - version: Firmware version string
+    - name: Firmware name
+    - device_type: Type of device this firmware is for
+    
+    Optional fields:
+    - is_critical: Whether this is a critical update (default: false)
+    """
     firmware_service = FirmwareService(db)
     
-    # Use current user ID if available
-    created_by = current_user.get("id") if current_user else None
-    
-    new_firmware = await firmware_service.create_firmware(
-        version=firmware.version,
-        name=firmware.name,
-        device_type=firmware.device_type,
-        description=firmware.description,
-        file_size=firmware.file_size,
-        changelog=firmware.changelog,
-        is_critical=firmware.is_critical,
-        created_by=created_by
-    )
-    
-    return new_firmware
+    try:
+        new_firmware = await firmware_service.create_firmware(
+            version=firmware.get("version"),
+            name=firmware.get("name"),
+            device_type=firmware.get("device_type"),
+            is_critical=firmware.get("is_critical", False)
+        )
+        
+        return new_firmware.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-@router.get("/{firmware_id}", response_model=schemas.FirmwareResponse)
+@router.get("/{firmware_id}", response_model=Dict[str, Any])
 async def get_firmware(
     firmware_id: str = Path(..., description="Firmware ID"),
     db: AsyncSession = Depends(get_db)
@@ -66,15 +88,14 @@ async def get_firmware(
     if not firmware:
         raise HTTPException(status_code=404, detail="Firmware not found")
     
-    return firmware
+    return firmware.to_dict()
 
-@router.get("/device/{device_id}/compatible", response_model=List[schemas.FirmwareResponse])
+@router.get("/device/{device_id}/compatible", response_model=List[Dict[str, Any]])
 async def get_device_compatible_firmware(
     device_id: str = Path(..., description="Device hash ID"),
     db: AsyncSession = Depends(get_db)
 ):
     """Get compatible firmware for a specific device"""
-    firmware_service = FirmwareService(db)
     device_service = DeviceService(db)
     
     # Verify device exists
@@ -82,126 +103,476 @@ async def get_device_compatible_firmware(
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     
-    firmware_list = await firmware_service.get_device_compatible_firmware(device_id)
-    return firmware_list
+    # Get firmware for the device type
+    firmware_service = FirmwareService(db)
+    query = f"SELECT * FROM firmware WHERE device_type = '{device.device_type}'"
+    result = await db.execute(query)
+    firmware_list = result.fetchall()
+    
+    return [
+        {
+            "id": fw.id,
+            "version": fw.version,
+            "name": fw.name,
+            "device_type": fw.device_type,
+            "release_date": fw.release_date.isoformat() if fw.release_date else None,
+            "is_critical": fw.is_critical,
+            "is_compatible": True
+        } for fw in firmware_list
+    ]
 
-@router.post("/updates", response_model=schemas.FirmwareUpdateResponse, status_code=201)
+@router.post("/update", response_model=Dict[str, Any])
 async def start_firmware_update(
-    update: schemas.FirmwareUpdateCreate,
+    update_data: Dict[str, Any],
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
-    """Start firmware update for a device"""
-    firmware_service = FirmwareService(db)
-    device_service = DeviceService(db)
+    """Start firmware update for a device
     
-    # Verify device exists
-    device = await device_service.get_device_by_id(update.device_id)
+    Required fields:
+    - device_id: ID of the device to update
+    - firmware_version: Target firmware version
+    
+    Optional fields:
+    - force_update: Whether to force update even if current version is same/newer (default: false)
+    """
+    device_id = update_data.get("device_id")
+    firmware_version = update_data.get("firmware_version")
+    force_update = update_data.get("force_update", False)
+    
+    if not device_id or not firmware_version:
+        raise HTTPException(status_code=400, detail="device_id and firmware_version are required")
+    
+    # Check if device exists
+    device_service = DeviceService(db)
+    device = await device_service.get_device_by_id(device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     
-    try:
-        # Start the firmware update
-        firmware_update = await firmware_service.start_update(
-            device_id=update.device_id,
-            firmware_id=update.firmware_id
-        )
-        
-        return firmware_update
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error starting firmware update: {str(e)}")
+    # Start firmware update (simplified)
+    firmware_service = FirmwareService(db)
+    update_id = await firmware_service.start_firmware_update(
+        device_id=device_id,
+        target_version=firmware_version,
+        force_update=force_update
+    )
+    
+    # Create notification for firmware update
+    notification_helper = NotificationHelper(db)
+    background_tasks.add_task(
+        notification_helper.create_firmware_update_notification,
+        device_id=device_id,
+        firmware_version=firmware_version
+    )
+    
+    return {
+        "status": "started",
+        "update_id": update_id,
+        "device_id": device_id,
+        "target_version": firmware_version
+    }
 
-@router.get("/updates/{update_id}", response_model=schemas.FirmwareUpdateResponse)
+@router.get("/update/{update_id}", response_model=Dict[str, Any])
 async def get_update_status(
     update_id: str = Path(..., description="Update ID"),
     db: AsyncSession = Depends(get_db)
 ):
     """Get firmware update status"""
     firmware_service = FirmwareService(db)
-    update = await firmware_service.get_update_by_id(update_id)
+    status = await firmware_service.get_update_status(update_id)
     
-    if not update:
+    if not status:
         raise HTTPException(status_code=404, detail="Update not found")
     
-    return update
+    return status
 
-@router.get("/device/{device_id}/updates", response_model=List[schemas.FirmwareUpdateResponse])
-async def get_device_updates(
-    device_id: str = Path(..., description="Device hash ID"),
-    limit: int = Query(10, ge=1, le=100),
+#
+# ===== FIRMWARE STATUS ENDPOINTS =====
+#
+
+@router.get("/status/device/{device_id}")
+async def check_device_firmware_status(
+    device_id: str,
+    include_vulnerabilities: bool = Query(True, description="Include vulnerability information"),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get firmware update history for a device"""
-    firmware_service = FirmwareService(db)
-    device_service = DeviceService(db)
+    """
+    Check if a specific device's firmware is up to date
     
-    # Verify device exists
+    Returns firmware status information and update recommendations
+    Also checks for vulnerabilities that could be fixed by firmware update
+    """
+    # Get device info
+    device_service = DeviceService(db)
     device = await device_service.get_device_by_id(device_id)
+    
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     
-    updates = await firmware_service.get_device_updates(device_id, limit)
-    return updates
-
-@router.post("/batch", response_model=schemas.FirmwareBatchResponse, status_code=201)
-async def start_batch_update(
-    batch_update: schemas.FirmwareBatchCreate,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    current_user: Dict[str, Any] = Depends(get_current_client)
-):
-    """Start a batch firmware update for multiple devices"""
+    # Get latest firmware for device type
     firmware_service = FirmwareService(db)
+    latest_firmware = await firmware_service.get_latest_firmware_for_device_type(device.device_type)
     
-    # Use current user ID if available
-    created_by = current_user.get("id") if current_user else None
+    if not latest_firmware:
+        return {
+            "status": "no_firmware",
+            "message": f"No firmware found for device type {device.device_type}",
+            "device": device.to_dict()
+        }
     
-    try:
-        # Start the batch update
-        batch = await firmware_service.start_batch_update(
-            firmware_id=batch_update.firmware_id,
-            device_ids=batch_update.device_ids,
-            device_type=batch_update.device_type,
-            name=batch_update.name,
-            created_by=created_by
-        )
+    # Compare versions - simplified for demo
+    current_version = device.firmware_version or "0.0.0"
+    latest_version = latest_firmware.version
+    
+    # Basic version comparison (in production, would use proper semver)
+    needs_update = current_version != latest_version
+    
+    result = {
+        "device": device.to_dict(),
+        "current_firmware": {
+            "version": current_version,
+            "last_updated": device.firmware_update_date.isoformat() if device.firmware_update_date else None
+        },
+        "latest_firmware": {
+            "version": latest_version,
+            "release_date": latest_firmware.release_date.isoformat() if latest_firmware.release_date else None,
+            "is_critical": latest_firmware.is_critical
+        },
+        "status": "needs_update" if needs_update else "up_to_date",
+        "update_recommended": needs_update
+    }
+    
+    # Include vulnerability information if requested
+    if include_vulnerabilities:
+        # Get device vulnerabilities
+        vulnerabilities = vulnerability_manager.get_device_vulnerabilities(device_id)
         
-        return batch
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error starting batch update: {str(e)}")
+        # Get vulnerabilities that would be fixed by a firmware update
+        fixable_vulnerabilities = []
+        if vulnerabilities and needs_update:
+            for vuln in vulnerabilities:
+                # Simplified logic - in a real system, would check if specific vulnerability
+                # is addressed by this firmware version
+                if vuln.get("fix_available") == "firmware_update":
+                    fixable_vulnerabilities.append(vuln)
+        
+        result["vulnerabilities"] = {
+            "total_count": len(vulnerabilities) if vulnerabilities else 0,
+            "fixable_by_update": len(fixable_vulnerabilities),
+            "fixable_vulnerabilities": fixable_vulnerabilities
+        }
+    
+    return result
 
-@router.get("/batch/{batch_id}", response_model=schemas.FirmwareBatchResponse)
-async def get_batch_status(
-    batch_id: str = Path(..., description="Batch update ID"),
+@router.get("/status/all")
+async def check_all_devices_firmware_status(
+    device_type: str = Query(None, description="Filter by device type"),
+    status: str = Query(None, description="Filter by status (needs_update, up_to_date, all)"),
+    include_vulnerabilities: bool = Query(True, description="Include vulnerability information"),
+    limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get batch update status"""
+    """
+    Check firmware status for all devices
+    
+    Returns a summary of devices that need updates and those that are up to date
+    """
+    # Get all devices
+    query = select(Device)
+    
+    # Apply device type filter if provided
+    if device_type:
+        query = query.where(Device.device_type == device_type)
+    
+    result = await db.execute(query)
+    devices = result.scalars().all()
+    
+    if not devices:
+        return {
+            "status": "no_devices",
+            "message": "No devices found with the specified criteria",
+            "devices": []
+        }
+    
     firmware_service = FirmwareService(db)
-    batch = await firmware_service.get_batch_by_id(batch_id)
     
-    if not batch:
-        raise HTTPException(status_code=404, detail="Batch update not found")
+    # Get latest firmware versions for each device type
+    device_types = set(d.device_type for d in devices)
+    latest_firmware_by_type = {}
     
-    return batch
+    for dt in device_types:
+        latest = await firmware_service.get_latest_firmware_for_device_type(dt)
+        if latest:
+            latest_firmware_by_type[dt] = latest
+    
+    # Process each device
+    devices_data = []
+    needs_update_count = 0
+    up_to_date_count = 0
+    
+    for device in devices:
+        # Skip if no firmware exists for this device type
+        if device.device_type not in latest_firmware_by_type:
+            continue
+        
+        latest_firmware = latest_firmware_by_type[device.device_type]
+        current_version = device.firmware_version or "0.0.0"
+        latest_version = latest_firmware.version
+        
+        # Basic version comparison
+        needs_update = current_version != latest_version
+        
+        if needs_update:
+            needs_update_count += 1
+        else:
+            up_to_date_count += 1
+        
+        # Skip if filtered by status
+        if status == "needs_update" and not needs_update:
+            continue
+        if status == "up_to_date" and needs_update:
+            continue
+        
+        device_data = {
+            "device": {
+                "id": device.hash_id,
+                "name": device.name,
+                "device_type": device.device_type
+            },
+            "current_firmware": {
+                "version": current_version,
+                "last_updated": device.firmware_update_date.isoformat() if device.firmware_update_date else None
+            },
+            "latest_firmware": {
+                "version": latest_version,
+                "release_date": latest_firmware.release_date.isoformat() if latest_firmware.release_date else None,
+                "is_critical": latest_firmware.is_critical
+            },
+            "status": "needs_update" if needs_update else "up_to_date",
+            "update_recommended": needs_update
+        }
+        
+        # Include vulnerability information if requested
+        if include_vulnerabilities:
+            vulnerabilities = vulnerability_manager.get_device_vulnerabilities(device.hash_id)
+            
+            # Get vulnerabilities that would be fixed by a firmware update
+            fixable_vulnerabilities = []
+            if vulnerabilities and needs_update:
+                for vuln in vulnerabilities:
+                    if vuln.get("fix_available") == "firmware_update":
+                        fixable_vulnerabilities.append(vuln)
+            
+            device_data["vulnerabilities"] = {
+                "total_count": len(vulnerabilities) if vulnerabilities else 0,
+                "fixable_by_update": len(fixable_vulnerabilities)
+            }
+        
+        devices_data.append(device_data)
+        
+        # Respect the limit
+        if len(devices_data) >= limit:
+            break
+    
+    return {
+        "summary": {
+            "total_devices": len(devices),
+            "needs_update": needs_update_count,
+            "up_to_date": up_to_date_count,
+            "update_percentage": round(needs_update_count / len(devices) * 100, 1) if devices else 0
+        },
+        "devices": devices_data
+    }
 
-@router.get("/device/{device_id}/history", response_model=List[schemas.DeviceFirmwareHistoryResponse])
-async def get_device_firmware_history(
-    device_id: str = Path(..., description="Device hash ID"),
-    limit: int = Query(10, ge=1, le=100),
+@router.get("/status/summary")
+async def get_firmware_status_summary(
+    include_vulnerabilities: bool = Query(True, description="Include vulnerability metrics"),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get firmware version history for a device"""
+    """
+    Get a summary of firmware status across all devices
+    
+    Returns counts and percentages of devices needing updates
+    """
+    # Get device counts by type
+    query = select(Device.device_type, func.count().label("count")).group_by(Device.device_type)
+    result = await db.execute(query)
+    device_counts = {row[0]: row[1] for row in result}
+    
+    # If no devices, return empty summary
+    if not device_counts:
+        return {
+            "status": "no_devices",
+            "message": "No devices found in system",
+            "summary": {
+                "total_devices": 0,
+                "needs_update": 0,
+                "up_to_date": 0,
+                "update_percentage": 0
+            }
+        }
+    
+    # Get latest firmware for each device type
     firmware_service = FirmwareService(db)
-    device_service = DeviceService(db)
     
-    # Verify device exists
-    device = await device_service.get_device_by_id(device_id)
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
+    latest_firmware = {}
+    for device_type in device_counts.keys():
+        latest = await firmware_service.get_latest_firmware_for_device_type(device_type)
+        if latest:
+            latest_firmware[device_type] = latest.version
     
-    history = await firmware_service.get_device_firmware_history(device_id, limit)
-    return history
+    # Count devices needing updates
+    needs_update_count = 0
+    critical_updates_count = 0
+    
+    # Get all devices
+    query = select(Device)
+    result = await db.execute(query)
+    devices = result.scalars().all()
+    
+    for device in devices:
+        if device.device_type not in latest_firmware:
+            continue
+            
+        latest_version = latest_firmware[device.device_type]
+        current_version = device.firmware_version or "0.0.0"
+        
+        if current_version != latest_version:
+            needs_update_count += 1
+            
+            # Check if update is critical
+            latest_fw = await firmware_service.get_latest_firmware_for_device_type(device.device_type)
+            if latest_fw and latest_fw.is_critical:
+                critical_updates_count += 1
+    
+    total_devices = len(devices)
+    up_to_date_count = total_devices - needs_update_count
+    
+    # Prepare summary
+    summary = {
+        "total_devices": total_devices,
+        "needs_update": needs_update_count,
+        "up_to_date": up_to_date_count,
+        "critical_updates": critical_updates_count,
+        "update_percentage": round(needs_update_count / total_devices * 100, 1) if total_devices else 0,
+        "by_device_type": {
+            dt: {
+                "total": count,
+                "latest_firmware": latest_firmware.get(dt, "unknown")
+            } for dt, count in device_counts.items()
+        }
+    }
+    
+    # Include vulnerability information if requested
+    if include_vulnerabilities:
+        # Count vulnerabilities fixable by firmware update
+        fixable_vulnerabilities = 0
+        vulnerability_service = VulnerabilityService(db)
+        
+        for device in devices:
+            vulnerabilities = vulnerability_manager.get_device_vulnerabilities(device.hash_id)
+            if not vulnerabilities:
+                continue
+                
+            for vuln in vulnerabilities:
+                if vuln.get("fix_available") == "firmware_update":
+                    fixable_vulnerabilities += 1
+        
+        summary["vulnerability_metrics"] = {
+            "fixable_by_firmware": fixable_vulnerabilities
+        }
+    
+    return {
+        "status": "success",
+        "summary": summary,
+        "timestamp": str(func.now())
+    }
+
+@router.get("/vulnerability-remediation")
+async def get_firmware_vulnerability_remediation(
+    db: AsyncSession = Depends(get_db),
+    current_client = Depends(get_current_client)
+):
+    """
+    Get mapping between firmware updates and vulnerability remediation
+    
+    Shows which vulnerabilities can be fixed by firmware updates and provides
+    remediation recommendations for device fleet
+    """
+    # Get all devices
+    query = select(Device)
+    result = await db.execute(query)
+    devices = result.scalars().all()
+    
+    if not devices:
+        return {
+            "status": "no_devices",
+            "message": "No devices found in system",
+            "remediation_plan": []
+        }
+    
+    # Process each device
+    remediation_plan = []
+    
+    for device in devices:
+        # Get device vulnerabilities
+        vulnerabilities = vulnerability_manager.get_device_vulnerabilities(device.hash_id)
+        
+        # Skip if no vulnerabilities
+        if not vulnerabilities:
+            continue
+            
+        # Check for firmware-fixable vulnerabilities
+        firmware_fixable = [v for v in vulnerabilities if v.get("fix_available") == "firmware_update"]
+        
+        # Skip if no firmware-fixable vulnerabilities
+        if not firmware_fixable:
+            continue
+            
+        # Get latest firmware
+        firmware_service = FirmwareService(db)
+        latest_firmware = await firmware_service.get_latest_firmware_for_device_type(device.device_type)
+        
+        if not latest_firmware:
+            continue
+            
+        # Check if device needs update
+        current_version = device.firmware_version or "0.0.0"
+        needs_update = current_version != latest_firmware.version
+        
+        # Skip if already up to date
+        if not needs_update:
+            continue
+            
+        # Add to remediation plan
+        device_plan = {
+            "device": {
+                "id": device.hash_id,
+                "name": device.name,
+                "device_type": device.device_type,
+                "current_firmware": current_version
+            },
+            "firmware_update": {
+                "version": latest_firmware.version,
+                "is_critical": latest_firmware.is_critical
+            },
+            "fixable_vulnerabilities": [
+                {
+                    "id": v.get("id"),
+                    "title": v.get("title"),
+                    "severity": v.get("severity")
+                } for v in firmware_fixable
+            ],
+            "recommendation": "Update firmware to fix vulnerabilities"
+        }
+        
+        remediation_plan.append(device_plan)
+    
+    # Sort by number of vulnerabilities (descending)
+    remediation_plan.sort(key=lambda x: len(x["fixable_vulnerabilities"]), reverse=True)
+    
+    return {
+        "status": "success",
+        "total_devices_with_fixable_vulnerabilities": len(remediation_plan),
+        "remediation_plan": remediation_plan
+    }

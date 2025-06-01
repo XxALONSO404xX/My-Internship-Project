@@ -1,6 +1,6 @@
 """Activity tracking service for the IoT Platform"""
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from datetime import datetime, timedelta
 from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,10 +23,10 @@ class ActivityService:
                            activity_type: str,
                            action: str,
                            description: str = None,
-                           user_id: Optional[int] = None,
+                           user_id: Optional[Union[int, str]] = None,
                            user_ip: Optional[str] = None,
                            target_type: Optional[str] = None,
-                           target_id: Optional[int] = None,
+                           target_id: Optional[Union[int, str]] = None,
                            target_name: Optional[str] = None,
                            previous_state: Optional[Dict[str, Any]] = None,
                            new_state: Optional[Dict[str, Any]] = None,
@@ -50,19 +50,45 @@ class ActivityService:
         Returns:
             Newly created Activity instance
         """
+        # Convert string user_id to None to prevent database type errors (db expects integer)
+        effective_user_id = None
+        if user_id is not None:
+            if isinstance(user_id, int):
+                effective_user_id = user_id
+            else:
+                logger.warning(f"Non-integer user_id provided: {user_id}, setting to None to prevent DB errors")
+                
+        # Convert string target_id to None if it's not an integer
+        effective_target_id = None
+        if target_id is not None:
+            if isinstance(target_id, int):
+                effective_target_id = target_id
+            # If target_id is a string but can be converted to an integer, use that
+            elif isinstance(target_id, str) and target_id.isdigit():
+                effective_target_id = int(target_id)
+            else:
+                logger.warning(f"Non-integer target_id provided: {target_id}, setting to None to prevent DB errors")
+        
+        # Add the original IDs to metadata for reference
+        meta_dict = metadata or {}
+        if user_id is not None and effective_user_id is None:
+            meta_dict['original_user_id'] = str(user_id)
+        if target_id is not None and effective_target_id is None:
+            meta_dict['original_target_id'] = str(target_id)
+            
         activity = Activity(
             activity_type=activity_type,
             action=action,
             description=description,
             timestamp=datetime.utcnow(),
-            user_id=user_id,
+            user_id=effective_user_id,
             user_ip=user_ip,
             target_type=target_type,
-            target_id=target_id,
+            target_id=effective_target_id,
             target_name=target_name,
             previous_state=previous_state,
             new_state=new_state,
-            metadata=metadata or {}
+            metadata=meta_dict
         )
         
         self.db.add(activity)
@@ -73,14 +99,15 @@ class ActivityService:
         return activity
     
     async def log_device_state_change(self,
-                                     device_id: int,
-                                     device_name: str,
-                                     action: str,
-                                     previous_state: Dict[str, Any],
-                                     new_state: Dict[str, Any],
-                                     user_id: Optional[int] = None,
+                                     device_id: Optional[Union[int, str]] = None,
+                                     device_name: str = None,
+                                     action: str = None,
+                                     previous_state: Dict[str, Any] = None,
+                                     new_state: Dict[str, Any] = None,
+                                     user_id: Optional[Union[int, str]] = None,
                                      user_ip: Optional[str] = None,
-                                     description: Optional[str] = None) -> Activity:
+                                     description: Optional[str] = None,
+                                     metadata: Optional[Dict[str, Any]] = None) -> Activity:
         """
         Log a device state change activity
         
@@ -118,7 +145,8 @@ class ActivityService:
             target_id=device_id,
             target_name=device_name,
             previous_state=previous_state,
-            new_state=new_state
+            new_state=new_state,
+            metadata=metadata
         )
     
     async def log_user_action(self,

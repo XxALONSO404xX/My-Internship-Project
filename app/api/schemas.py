@@ -340,6 +340,12 @@ class RuleCondition(BaseModel):
     property: Optional[str] = Field(None, description="Property name for device_status conditions")
     value: Optional[Any] = Field(None, description="Value to compare against")
     time_window: Optional[int] = Field(None, description="Time window in minutes for sensor conditions")
+    
+    @validator('operator')
+    def validate_operator(cls, v):
+        if v not in ["AND", "OR"]:
+            raise ValueError("Operator must be either 'AND' or 'OR'")
+        return v
 
 class RuleAction(BaseModel):
     type: str = Field(..., description="Action type (device_control, notification, group_control)")
@@ -353,6 +359,28 @@ class RuleAction(BaseModel):
     priority: Optional[int] = Field(None, description="Priority for notification actions")
     recipients: Optional[List[str]] = Field(None, description="Recipients for notification actions")
     channels: Optional[List[str]] = Field(None, description="Channels for notification actions")
+    
+    @validator('type')
+    def validate_type(cls, v):
+        valid_types = ["control_device", "set_status", "notification", "group_control"]
+        if v not in valid_types:
+            raise ValueError(f"Type must be one of: {', '.join(valid_types)}")
+        return v
+        
+    @validator('parameters')
+    def validate_parameters(cls, v, values):
+        if 'type' not in values:
+            return v
+            
+        if values['type'] == 'control_device' and v and 'action' not in v:
+            raise ValueError("control_device action must have an action parameter")
+            
+        if values['type'] == 'notification':
+            if not v.get('recipients'):
+                raise ValueError("Notification action must have recipients")
+            if not v.get('channels'):
+                raise ValueError("Notification action must have channels")
+        return v
 
 class RuleBase(BaseModel):
     name: str = Field(..., description="Name of the rule")
@@ -366,6 +394,48 @@ class RuleBase(BaseModel):
 class RuleCreate(RuleBase):
     conditions: Dict[str, Any] = Field(..., description="Conditions that trigger the rule")
     actions: List[Dict[str, Any]] = Field(..., description="Actions to take when conditions are met")
+    
+    @validator('conditions')
+    def validate_conditions(cls, v):
+        if "operator" not in v:
+            raise ValueError("Conditions must have an operator (AND/OR)")
+        
+        if v["operator"] not in ["AND", "OR"]:
+            raise ValueError(f"Invalid operator: {v['operator']}. Must be 'AND' or 'OR'")
+            
+        if "conditions" not in v or not v["conditions"]:
+            raise ValueError("Conditions must have at least one condition")
+            
+        return v
+        
+    @validator('actions')
+    def validate_actions(cls, v):
+        if not v:
+            raise ValueError("Rule must have at least one action")
+        
+        for action in v:
+            if "type" not in action:
+                raise ValueError("Action must have a type")
+                
+            valid_types = ["control_device", "set_status", "notification"]
+            if action["type"] not in valid_types:
+                raise ValueError(f"Invalid action type: {action['type']}. Must be one of: {', '.join(valid_types)}")
+                
+            # If control_device, validate action parameter
+            if action["type"] == "control_device":
+                parameters = action.get("parameters", {})
+                if "action" not in parameters:
+                    raise ValueError("control_device action must have an action parameter")
+                    
+            # If notification, validate recipients and channels
+            if action["type"] == "notification":
+                parameters = action.get("parameters", {})
+                if not parameters.get("recipients"):
+                    raise ValueError("Notification action must have recipients")
+                if not parameters.get("channels"):
+                    raise ValueError("Notification action must have channels")
+                    
+        return v
 
 class RuleUpdate(BaseModel):
     name: Optional[str] = Field(None, description="Name of the rule")
@@ -377,7 +447,7 @@ class RuleUpdate(BaseModel):
     priority: Optional[int] = Field(None, description="Priority of the rule (higher = higher priority)")
     target_device_ids: Optional[List[int]] = Field(None, description="List of device IDs this rule applies to (null means all)")
 
-class RuleResponse(RuleBase):
+class RuleData(RuleBase):
     id: int
     conditions: Dict[str, Any]
     actions: List[Dict[str, Any]]
@@ -389,6 +459,17 @@ class RuleResponse(RuleBase):
     
     class Config:
         from_attributes = True
+
+
+class StandardResponse(BaseModel):
+    """Standardized base response model for API operations"""
+    status: str = Field("success", description="Response status: success or error")
+    message: str = Field("", description="Human-readable response message")
+    errors: Optional[List[Dict[str, Any]]] = Field(None, description="List of errors if any")
+
+class RuleResponse(StandardResponse):
+    """Standardized response model for rule operations"""
+    data: Optional[Union[RuleData, List[RuleData], Dict[str, Any]]] = None
 
 class RuleEvaluationResponse(BaseModel):
     rule_id: int
@@ -697,13 +778,38 @@ class RefreshToken(BaseModel):
     refresh_token: str
     expires_at: datetime
 
-class TokenResponse(BaseModel):
+class AuthResponse(BaseModel):
+    """Base class for all authentication-related responses"""
+    status: str = "success"
+    message: str
+    data: Optional[Dict[str, Any]] = None
+    errors: Optional[List[str]] = None
+
+class TokenResponse(AuthResponse):
     """Complete token response including access and refresh tokens"""
-    access_token: str
-    token_type: str
-    refresh_token: str
-    expires_at: datetime
-    client: Dict[str, Any]
+    data: Dict[str, Any] = {
+        "access_token": "",
+        "token_type": "bearer",
+        "refresh_token": "",
+        "expires_at": None,
+        "client": {}
+    }
+    
+    @classmethod
+    def create(cls, access_token: str, token_type: str, refresh_token: str, 
+             expires_at: datetime, client: Dict[str, Any]) -> 'TokenResponse':
+        """Create a token response with the specified data"""
+        return cls(
+            status="success",
+            message="Authentication successful",
+            data={
+                "access_token": access_token,
+                "token_type": token_type,
+                "refresh_token": refresh_token,
+                "expires_at": expires_at,
+                "client": client
+            }
+        )
 
 class RefreshTokenRequest(BaseModel):
     """Request to refresh an access token"""

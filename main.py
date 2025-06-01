@@ -1,11 +1,16 @@
 import logging
 import os
 import asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from typing import Any  # Use for type hints
+# Exception is a built-in Python class, not from FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 import uvicorn
 from datetime import datetime
+from sqlalchemy.exc import SQLAlchemyError
 from docs_enhancer import custom_openapi
+from app.api.error_handlers import sqlalchemy_exception_handler, validation_exception_handler, general_exception_handler
 
 from app.api.router import api_router
 from app.models.database import AsyncSessionLocal, get_db
@@ -39,6 +44,13 @@ async def lifespan(app: FastAPI):
     
     # Start background services with a dedicated DB session
     from app.startup import run_startup_tasks
+    
+    # Create a dedicated session directly (not using the context manager)
+    # to avoid session conflicts
+    db = AsyncSessionLocal()
+    await run_startup_tasks(db)
+    
+    logger.info("Background services started")
     
     # Yield control to FastAPI
     yield
@@ -80,6 +92,11 @@ def get_application() -> FastAPI:
     
     # Include API router
     _app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+    
+    # Register exception handlers
+    _app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
+    _app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    _app.add_exception_handler(Exception, general_exception_handler)
     
     return _app
 

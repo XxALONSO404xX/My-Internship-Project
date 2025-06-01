@@ -27,9 +27,25 @@ async def check_rules_periodically(interval_seconds: int = 5):
                 rule_service = RuleService(db)
                 result = await rule_service.apply_all_rules()
                 
-                # Only log when rules are actually triggered
-                if result.get("devices_affected", 0) > 0:
-                    logger.info(f"Virtual rule evaluation: affected {result.get('devices_affected', 0)} devices with {result.get('total_actions', 0)} actions")
+                # Handle new standardized response format
+                if result.get("status") == "success" and result.get("data"):
+                    data = result.get("data", {})
+                    devices_affected = data.get("devices_affected", 0)
+                    total_actions = data.get("total_actions", 0)
+                    
+                    # Only log when rules are actually triggered
+                    if devices_affected > 0:
+                        logger.info(f"Virtual rule evaluation: affected {devices_affected} devices with {total_actions} actions")
+                        
+                        # Additional debugging for execution details
+                        execution_id = data.get("execution_id")
+                        if execution_id:
+                            logger.debug(f"Rule execution ID: {execution_id}")
+                elif result.get("status") == "error":
+                    error_msg = result.get("message", "Unknown error in rule execution")
+                    errors = result.get("errors", [])
+                    error_details = ", ".join([f"{e.get('field')}: {e.get('detail')}" for e in errors]) if errors else "No details"
+                    logger.error(f"Rule execution error: {error_msg} - {error_details}")
                 
                 break  # Only need one session iteration
                 

@@ -114,8 +114,9 @@ class WebSocketManager:
                 results["errors"].append(f"Error for client {client_id}: {str(e)}")
                 logger.error(f"Broadcast error for client {client_id}: {str(e)}")
         
-        # Log delivery stats
-        logger.info(f"Notification broadcast results: {results['delivered']}/{results['total']} delivered")
+        # Log delivery stats only if there were connections to deliver to
+        if results["total"] > 0:
+            logger.info(f"Notification broadcast results: {results['delivered']}/{results['total']} delivered")
         
         results["success"] = results["delivered"] > 0
         return results
@@ -218,7 +219,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         logger.error(f"WebSocket error for client {client_id}: {str(e)}")
         websocket_manager.disconnect(client_id)
 
-# Improved function to publish notifications with better error handling
+# Improved functions to publish notifications with better error handling
 async def publish_event(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Send a notification to all connected WebSocket clients
@@ -232,6 +233,14 @@ async def publish_event(data: Dict[str, Any]) -> Dict[str, Any]:
     Raises:
         Exception: If there's a critical error that should interrupt notification flow
     """
+    
+    # Add timestamp if not provided
+    if "timestamp" not in data:
+        data["timestamp"] = datetime.utcnow().isoformat()
+        
+    # Ensure event_type is set for frontend routing
+    if "event_type" not in data:
+        data["event_type"] = "notification"
     message = {
         "type": "notification",
         "data": data
@@ -243,12 +252,17 @@ async def publish_event(data: Dict[str, Any]) -> Dict[str, Any]:
         
         # Log results but don't stop notification delivery if WebSocket fails
         if not results["success"]:
-            logger.warning(f"WebSocket broadcast had issues: {results['delivered']}/{results['total']} delivered")
-            if results["errors"]:
-                for error in results["errors"][:3]:  # Log first few errors
-                    logger.warning(f"WebSocket error: {error}")
-                if len(results["errors"]) > 3:
-                    logger.warning(f"...and {len(results['errors']) - 3} more errors")
+            # Only log as warning if there were actually clients that failed to receive messages
+            if results["total"] > 0:
+                logger.warning(f"WebSocket broadcast had issues: {results['delivered']}/{results['total']} delivered")
+                if results["errors"]:
+                    for error in results["errors"][:3]:  # Log first few errors
+                        logger.warning(f"WebSocket error: {error}")
+                    if len(results["errors"]) > 3:
+                        logger.warning(f"...and {len(results['errors']) - 3} more errors")
+            else:
+                # No clients connected, log at info level only
+                logger.debug(f"WebSocket broadcast: No connected clients")
         
         return results
     except Exception as e:
@@ -261,3 +275,39 @@ async def publish_event(data: Dict[str, Any]) -> Dict[str, Any]:
             "delivered": 0,
             "failed": 0
         } 
+
+async def publish_notification(title: str, content: str, notification_type: str = "info", 
+                          priority: int = 3, source: str = "system", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Specialized function to send a notification through WebSockets
+    
+    Args:
+        title: Notification title
+        content: Notification content
+        notification_type: Type of notification (info, warning, error, success)
+        priority: Priority level (1-5, where 5 is highest)
+        source: Source of the notification
+        metadata: Additional notification data
+        
+    Returns:
+        Dict with delivery results
+    """
+    # Create notification data structure
+    notification = {
+        "title": title,
+        "content": content,
+        "type": notification_type,
+        "priority": priority,
+        "source": source,
+        "read": False,
+        "timestamp": datetime.utcnow().isoformat(),
+        "event_type": "notification",
+        "id": f"notif_{int(datetime.utcnow().timestamp())}"
+    }
+    
+    # Add metadata if provided
+    if metadata:
+        notification["metadata"] = metadata
+    
+    # Send as notification event
+    return await publish_event(notification)

@@ -1,10 +1,15 @@
 """Group API endpoints for IoT platform"""
+import traceback
+import logging
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
+
+logger = logging.getLogger(__name__)
 
 from app.models.database import get_db
-from app.services.group_service import GroupService
+from app.services.group_management_service import GroupService
 from app.api.deps import get_current_client
 from app.api.schemas import (
     GroupCreate, GroupUpdate, GroupResponse, GroupWithDevices
@@ -21,21 +26,51 @@ async def list_groups(
     current_user = Depends(get_current_client)
 ):
     """List all groups with optional filtering by type"""
-    group_service = GroupService(db)
-    
-    if group_type:
-        groups = await group_service.get_groups_by_type(group_type)
-    else:
-        groups = await group_service.get_all_groups(skip=skip, limit=limit)
-    
-    # Add device count to each group
-    result = []
-    for group in groups:
-        group_dict = group.to_dict()
-        group_dict["device_count"] = len(group.devices) if group.devices else 0
-        result.append(group_dict)
-    
-    return result
+    try:
+        logger.info(f"Listing groups with skip={skip}, limit={limit}, type={group_type}")
+        group_service = GroupService(db)
+        
+        try:
+            if group_type:
+                groups = await group_service.get_groups_by_type(group_type)
+            else:
+                groups = await group_service.get_all_groups(skip=skip, limit=limit)
+        except SQLAlchemyError as db_error:
+            logger.error(f"Database error: {str(db_error)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "Database error",
+                    "message": str(db_error)
+                }
+            )
+        
+        # Use service method to format response with device counts
+        try:
+            result = group_service.format_groups_response(groups)
+        except Exception as e:
+            logger.error(f"Error processing group data: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "Data processing error",
+                    "message": str(e)
+                }
+            )
+        
+        return result
+    except Exception as e:
+        logger.error(f"Unexpected error in list_groups: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Server error",
+                "message": str(e)
+            }
+        )
 
 @router.post("/", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_group(
@@ -55,9 +90,7 @@ async def create_group(
         device_ids=group_data.device_ids
     )
     
-    group_dict = group.to_dict()
-    group_dict["device_count"] = len(group.devices) if group.devices else 0
-    return group_dict
+    return group_service.format_group_response(group)
 
 @router.get("/{group_id}", response_model=GroupResponse)
 async def get_group(
@@ -72,9 +105,7 @@ async def get_group(
     if not group:
         raise HTTPException(status_code=404, detail=f"Group with ID {group_id} not found")
     
-    group_dict = group.to_dict()
-    group_dict["device_count"] = len(group.devices) if group.devices else 0
-    return group_dict
+    return group_service.format_group_response(group)
 
 @router.get("/{group_id}/devices", response_model=GroupWithDevices)
 async def get_group_with_devices(
@@ -91,6 +122,7 @@ async def get_group_with_devices(
     
     # Return group with device information
     result = group.to_dict_with_devices()
+    # Add device count using same logic as our service method
     result["device_count"] = len(group.devices) if group.devices else 0
     return result
 
@@ -117,9 +149,7 @@ async def update_group(
     if not updated_group:
         raise HTTPException(status_code=404, detail=f"Group with ID {group_id} not found")
     
-    group_dict = updated_group.to_dict()
-    group_dict["device_count"] = len(updated_group.devices) if updated_group.devices else 0
-    return group_dict
+    return group_service.format_group_response(updated_group)
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
@@ -185,11 +215,4 @@ async def get_device_groups(
     
     groups = await group_service.get_groups_for_device(device_id)
     
-    # Add device count to each group
-    result = []
-    for group in groups:
-        group_dict = group.to_dict()
-        group_dict["device_count"] = len(group.devices) if group.devices else 0
-        result.append(group_dict)
-    
-    return result
+    return group_service.format_groups_response(groups)

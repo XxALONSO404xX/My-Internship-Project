@@ -12,7 +12,15 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = os.getenv('SECRET_KEY', '')
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES', 60 * 24 * 7))  # 7 days default
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv('REFRESH_TOKEN_EXPIRE_DAYS', 30))  # 30 days default
     ALGORITHM: str = os.getenv('ALGORITHM', 'HS256')  # JWT algorithm
+    
+    # Password validation settings
+    PASSWORD_MIN_LENGTH: int = 8
+    PASSWORD_REQUIRE_UPPERCASE: bool = True
+    PASSWORD_REQUIRE_LOWERCASE: bool = True
+    PASSWORD_REQUIRE_DIGIT: bool = True
+    PASSWORD_REQUIRE_SPECIAL: bool = False
     
     # PostgreSQL settings
     POSTGRES_SERVER: str = os.getenv('POSTGRES_SERVER', '')

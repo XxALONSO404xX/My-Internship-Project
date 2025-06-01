@@ -42,4 +42,4 @@ class VulnerabilityScan(Base):
     device = relationship("Device", backref="vulnerability_scans")
     
     def __repr__(self):
-        return f"<VulnerabilityScan {self.id} for device {self.device_id}>" 
+        return f"<VulnerabilityScan {self.id} for device {self.device_id}>"

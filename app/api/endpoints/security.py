@@ -1,164 +1,232 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query, Path
+"""
+Security Management API for IoT Platform
+-----------------------------------------
+This module consolidates all security-related endpoints including:
+- Vulnerability scanning and management
+- Vulnerability remediation
+- Security status reporting
+- Simulated vulnerability injection for testing
+"""
+from typing import Any, Dict, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Request, Body
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, List, Any, Optional
-from datetime import datetime
 
-from app.api.schemas import ResponseModel
 from app.models.database import get_db
-from app.services.vulnerability_scanner import create_vulnerability_scanner, VulnerabilityScanner
-from app.services.device_service import DeviceService
-from app.api.deps import get_current_client
+from app.models.client import Client
+from app.api.deps import get_current_client, get_client_ip
+from app.services.security_service import VulnerabilityService, create_vulnerability_scanner
+from app.services.activity_service import ActivityService
+from app.utils.vulnerability_utils import vulnerability_manager
+from app.core.logging import logger
 
 router = APIRouter()
 
-async def get_vulnerability_scanner(db_session: AsyncSession = Depends(get_db)):
-    """Get a vulnerability scanner instance with DB session"""
-    return create_vulnerability_scanner(db_session)
+#
+# ===== VULNERABILITY SCANNING ENDPOINTS =====
+#
 
-@router.post("/vulnerabilities/scan", response_model=ResponseModel)
+@router.post("/vulnerability/{device_id}/scan", response_model=Dict[str, Any])
 async def start_vulnerability_scan(
+    device_id: str,
     background_tasks: BackgroundTasks,
-    scanner: VulnerabilityScanner = Depends(get_vulnerability_scanner)
-):
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_client: Client = Depends(get_current_client),
+    client_ip: str = Depends(get_client_ip)
+) -> Dict[str, Any]:
     """
-    Start a full vulnerability scan on all devices.
+    Start a vulnerability scan for a specific device
+    """
+    logger.info(f"Starting vulnerability scan for device {device_id} by client {current_client.id}")
+    vulnerability_service = VulnerabilityService(db)
     
-    This is an asynchronous operation. The response includes a scan_id
-    that can be used to check scan status and retrieve results.
-    """
     # Start the scan
-    result = await scanner.scan_multiple_devices([])
-    
-    return ResponseModel(
-        data=result,
-        message="Vulnerability scan started"
+    scan_result = await vulnerability_service.start_vulnerability_scan(
+        device_id=device_id,
+        user_id=current_client.id
     )
-
-@router.post("/vulnerabilities/scan/{device_id}", response_model=ResponseModel)
-async def start_device_vulnerability_scan(
-    device_id: int,
-    background_tasks: BackgroundTasks,
-    scanner: VulnerabilityScanner = Depends(get_vulnerability_scanner)
-):
-    """
-    Start a vulnerability scan on a specific device.
     
-    This is an asynchronous operation. The response includes a scan_id
-    that can be used to check scan status and retrieve results.
-    """
-    # Start the scan for the specific device
-    result = await scanner.scan_device(device_id)
+    if scan_result["status"] == "error":
+        raise HTTPException(status_code=400, detail=scan_result["error"])
     
-    return ResponseModel(
-        data=result,
-        message=f"Vulnerability scan started for device {device_id}"
+    # Add background task to simulate the scan
+    scan_id = scan_result["scan_id"]
+    background_tasks.add_task(
+        vulnerability_service.simulate_vulnerability_scan,
+        scan_id=scan_id
     )
-
-@router.get("/vulnerabilities/status/{scan_id}", response_model=ResponseModel)
-async def get_vulnerability_scan_status(
-    scan_id: str,
-    scanner: VulnerabilityScanner = Depends(get_vulnerability_scanner)
-):
-    """
-    Check the status of a vulnerability scan.
     
-    Returns the current status and, if completed, the results of the scan.
-    """
-    # Get scan results
-    result = await scanner.get_scan_results(scan_id)
-    
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Scan with ID {scan_id} not found"
-        )
-    
-    return ResponseModel(
-        data=result,
-        message=f"Vulnerability scan status for {scan_id}"
-    )
+    return scan_result
 
-@router.post("/vulnerabilities/cancel/{scan_id}", response_model=ResponseModel)
-async def cancel_vulnerability_scan(
-    scan_id: str,
-    scanner: VulnerabilityScanner = Depends(get_vulnerability_scanner)
-):
-    """
-    Cancel an ongoing vulnerability scan.
-    """
-    # Clean up resources
-    await scanner.cleanup()
-    
-    return ResponseModel(
-        data={"scan_id": scan_id, "status": "cancelled"},
-        message=f"Vulnerability scan {scan_id} has been cancelled"
-    )
-
-@router.get("/vulnerabilities/{device_id}")
-async def scan_device_vulnerabilities(
-    device_id: int = Path(..., description="ID of the device to scan"),
-    scanner = Depends(get_vulnerability_scanner),
-    current_user = Depends(get_current_client)
-):
-    """
-    Scan a device for vulnerabilities
-    """
-    result = await scanner.scan_device(device_id)
-    
-    if result.get("status") == "error":
-        raise HTTPException(status_code=404, detail=result.get("message", "Device not found"))
-        
-    return result
-
-@router.post("/vulnerabilities/batch")
-async def scan_multiple_devices(
-    device_ids: List[int],
-    scanner = Depends(get_vulnerability_scanner),
-    current_user = Depends(get_current_client)
-):
-    """
-    Scan multiple devices for vulnerabilities
-    """
-    if not device_ids:
-        raise HTTPException(status_code=400, detail="No device IDs provided")
-        
-    result = await scanner.scan_multiple_devices(device_ids)
-    return result
-
-@router.get("/vulnerabilities/results/{scan_id}")
+@router.get("/vulnerability/scan/{scan_id}", response_model=Dict[str, Any])
 async def get_vulnerability_scan_results(
-    scan_id: str = Path(..., description="ID of the vulnerability scan"),
-    scanner = Depends(get_vulnerability_scanner),
-    current_user = Depends(get_current_client)
-):
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_client: Client = Depends(get_current_client)
+) -> Dict[str, Any]:
     """
-    Get results of a vulnerability scan
+    Get the results of a vulnerability scan
     """
-    results = await scanner.get_scan_results(scan_id)
+    logger.info(f"Retrieving vulnerability scan results for scan {scan_id}")
+    vulnerability_service = VulnerabilityService(db)
     
-    if not results:
-        raise HTTPException(status_code=404, detail="Scan results not found")
-        
+    # Get scan results
+    results = await vulnerability_service.get_scan_results(scan_id)
+    
+    if results["status"] == "error":
+        raise HTTPException(status_code=404, detail=results["error"])
+    
     return results
 
-@router.get("/vulnerabilities/dashboard")
-async def get_vulnerability_dashboard(
-    limit: int = Query(10, description="Number of results to return"),
-    device_service: DeviceService = Depends(lambda db: DeviceService(db)),
-    scanner = Depends(get_vulnerability_scanner),
+@router.get("/vulnerability/device/{device_id}/history", response_model=Dict[str, Any])
+async def get_device_vulnerability_history(
+    device_id: str,
+    limit: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_client)
-):
+    current_client: Client = Depends(get_current_client)
+) -> Dict[str, Any]:
     """
-    Get vulnerability dashboard data
+    Get vulnerability scan history for a specific device
     """
-    # Get devices
-    devices = await device_service.get_all_devices()
-    device_ids = [d.id for d in devices[:limit]]
+    logger.info(f"Retrieving vulnerability scan history for device {device_id}")
     
-    # Run scan
-    if device_ids:
-        result = await scanner.scan_multiple_devices(device_ids)
-        return result
-    else:
-        return {"message": "No devices found"} 
+    # This endpoint would query the database for all vulnerability scans
+    # related to the specified device and return them
+    # For now, we'll return a placeholder
+    
+    return {
+        "status": "success",
+        "message": "This endpoint will be implemented to show vulnerability scan history"
+    }
+
+#
+# ===== VULNERABILITY REMEDIATION ENDPOINTS =====
+#
+
+@router.post("/remediation/vulnerability/{device_id}/{vulnerability_id}", response_model=Dict[str, Any])
+async def remediate_vulnerability(
+    device_id: str,
+    vulnerability_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_client: Client = Depends(get_current_client)
+) -> Dict[str, Any]:
+    """
+    Simulate remediation of a specific vulnerability on a device.
+    This is part of the simulated environment to demonstrate security workflow.
+    """
+    logger.info(f"Remediating vulnerability {vulnerability_id} on device {device_id}")
+    
+    # Log the remediation activity
+    activity_service = ActivityService(db)
+    await activity_service.log_device_state_change(
+        device_id=device_id,
+        action="vulnerability_remediated",
+        user_id=current_client.id,
+        metadata={"vulnerability_id": vulnerability_id}
+    )
+    
+    # Call the vulnerability manager to remediate
+    success = vulnerability_manager.remediate_vulnerability(device_id, vulnerability_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Vulnerability {vulnerability_id} not found on device {device_id} or remediation failed"
+        )
+    
+    return {
+        "status": "success",
+        "message": f"Vulnerability {vulnerability_id} has been remediated on device {device_id}",
+        "device_id": device_id,
+        "vulnerability_id": vulnerability_id,
+        "remaining_vulnerabilities": len(vulnerability_manager.get_device_vulnerabilities(device_id))
+    }
+
+@router.post("/remediation/bulk", response_model=Dict[str, Any])
+async def bulk_remediate_vulnerabilities(
+    remediation_data: Dict[str, List[str]] = Body(..., description="Map of device_id to list of vulnerability_ids"),
+    db: AsyncSession = Depends(get_db),
+    current_client: Client = Depends(get_current_client)
+) -> Dict[str, Any]:
+    """
+    Simulate bulk remediation of vulnerabilities across multiple devices.
+    This is part of the simulated environment to demonstrate security workflow.
+    """
+    logger.info(f"Performing bulk remediation for {len(remediation_data)} devices")
+    
+    # Log the bulk remediation activity
+    activity_service = ActivityService(db)
+    total_vulns = sum(len(vuln_ids) for vuln_ids in remediation_data.values())
+    await activity_service.log_activity(
+        action="bulk_vulnerability_remediation",
+        user_id=current_client.id,
+        metadata={
+            "devices_count": len(remediation_data),
+            "vulnerabilities_count": total_vulns
+        }
+    )
+    
+    # Perform the bulk remediation
+    results = vulnerability_manager.bulk_remediate_vulnerabilities(remediation_data)
+    
+    return {
+        "status": "success",
+        "message": f"Completed bulk remediation of {results['vulnerabilities_fixed']} vulnerabilities across {results['total_devices']} devices",
+        "results": results
+    }
+
+@router.post("/vulnerability/inject/{device_id}", response_model=Dict[str, Any])
+async def inject_vulnerability(
+    device_id: str,
+    vulnerability: Dict[str, Any] = Body(...),
+    db: AsyncSession = Depends(get_db),
+    current_client: Client = Depends(get_current_client)
+) -> Dict[str, Any]:
+    """
+    Inject a simulated vulnerability into a device.
+    This is useful for testing the security workflow.
+    Requires admin privileges.
+    """
+    # Check if user has admin role
+    if current_client.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only administrators can inject vulnerabilities"
+        )
+    
+    logger.info(f"Injecting vulnerability into device {device_id}")
+    
+    # Ensure the vulnerability has required fields
+    required_fields = ["id", "name", "severity", "description"]
+    for field in required_fields:
+        if field not in vulnerability:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required field '{field}' in vulnerability data"
+            )
+    
+    # Inject the vulnerability
+    success = vulnerability_manager.inject_vulnerability(device_id, vulnerability)
+    
+    if not success:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to inject vulnerability"
+        )
+    
+    # Log the activity
+    activity_service = ActivityService(db)
+    await activity_service.log_device_state_change(
+        device_id=device_id,
+        action="vulnerability_injected",
+        user_id=current_client.id,
+        metadata={"vulnerability_id": vulnerability["id"]}
+    )
+    
+    return {
+        "status": "success",
+        "message": f"Vulnerability {vulnerability['id']} has been injected into device {device_id}",
+        "device_id": device_id,
+        "vulnerability": vulnerability
+    }

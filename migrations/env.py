@@ -17,7 +17,7 @@ from app.models.database import Base
 # Import all models to ensure they are registered with SQLAlchemy
 from app.models.device import Device
 from app.models.client import Client
-from app.models.firmware import Firmware, FirmwareUpdate, FirmwareBatchUpdate, DeviceFirmwareHistory
+from app.models.firmware import Firmware, FirmwareUpdate  # Simplified firmware model
 from app.models.sensor_reading import SensorReading
 from app.models.rule import Rule
 from app.models.token import Token

@@ -8,7 +8,7 @@ from app.api.deps import get_current_client
 
 from app.api import schemas
 from app.models.database import get_db
-from app.services.notification_service import NotificationService
+from app.services.messaging_service import NotificationService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

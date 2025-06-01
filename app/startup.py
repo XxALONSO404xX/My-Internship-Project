@@ -1,4 +1,5 @@
 """Startup initialization tasks"""
+"""Startup tasks for the application"""
 import logging
 import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,6 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.rule_checker import start_rule_checker
 from app.services.sensor_generator import start_sensor_generator
 from app.services.token_service import TokenService
+from app.utils.vulnerability_utils import vulnerability_manager
+from app.models.device import Device
+# Removed job service import to simplify platform
 
 logger = logging.getLogger(__name__)
 
@@ -41,5 +45,13 @@ async def start_background_services(db: AsyncSession):
 
 async def run_startup_tasks(db: AsyncSession):
     """Run all startup initialization tasks"""
+    # Job monitoring service removed to simplify platform
+    
     # Start background services
-    await start_background_services(db) 
+    await start_background_services(db)
+    
+    # Initialize vulnerabilities for select devices
+    from app.services.security_service import vulnerability_initializer
+    logger.info("Starting vulnerability initialization...")
+    asyncio.create_task(vulnerability_initializer())
+    logger.info("Vulnerability initialization task scheduled")
