@@ -658,7 +658,30 @@ class DeviceService:
         """Get a device by hash_id"""
         query = select(Device).where(Device.hash_id == device_id)
         result = await self.db.execute(query)
-        return result.scalar_one_or_none()
+        device = result.scalar_one_or_none()
+        
+        # Critical: ensure is_online status and device metadata power state are in sync
+        if device and device.device_metadata:
+            # Handle device_metadata properly whether it's a string or dict
+            metadata = device.device_metadata
+            if isinstance(metadata, str):
+                try:
+                    import json
+                    metadata = json.loads(metadata)
+                except:
+                    # If can't parse as JSON, skip sync check
+                    return device
+                    
+            # Now safely access nested state
+            if isinstance(metadata, dict) and 'state' in metadata:
+                device_state = metadata.get('state', {})
+                # If device metadata indicates it's powered off, ensure is_online reflects that
+                if isinstance(device_state, dict) and device_state.get('power') is False and device.is_online:
+                    logger.warning(f"Device {device_id} has inconsistent state: metadata shows powered off but is_online=True. Fixing...")
+                    device.is_online = False
+                    await self.db.commit()
+        
+        return device
     
     async def get_device_by_legacy_id(self, legacy_id: int) -> Optional[Device]:
         """Get a device by legacy integer ID"""
@@ -698,9 +721,13 @@ class DeviceService:
             
             # Log activity
             await self.activity_service.log_activity(
-                activity_type="device_created",
-                entity_id=device.hash_id,
-                details={"device": device.name, "manufacturer": device.manufacturer}
+                activity_type="user_action",
+                action="device_created",
+                description=f"Device {device.name} was created",
+                target_type="device",
+                target_id=device.hash_id,
+                target_name=device.name,
+                metadata={"device": device.name, "manufacturer": device.manufacturer}
             )
             
             return device
@@ -749,11 +776,15 @@ class DeviceService:
             
             if changed_fields:
                 await self.activity_service.log_activity(
-                    activity_type="device_updated",
-                    entity_id=device.hash_id,
+                    activity_type="user_action",
+                    action="device_updated",
+                    description=f"Device {device.name} was updated",
+                    target_type="device",
+                    target_id=device.hash_id,
+                    target_name=device.name,
                     user_id=user_id,
-                    ip_address=user_ip,
-                    details={
+                    user_ip=user_ip,
+                    metadata={
                         "device": device.name,
                         "changes": changed_fields,
                         "original_values": {k: original_values[k] for k in changed_fields}
@@ -800,11 +831,15 @@ class DeviceService:
             
             # Log activity
             await self.activity_service.log_activity(
-                activity_type="device_deleted",
-                entity_id=device_id,  # Use the ID even though device is deleted
+                activity_type="user_action",
+                action="device_deleted",
+                description=f"Device {device_info.get('name', 'unknown')} was deleted",
+                target_type="device",
+                target_id=device_id,  # Use the ID even though device is deleted
+                target_name=device_info.get('name', 'unknown'),
                 user_id=user_id,
-                ip_address=user_ip,
-                details={"device": device_info}
+                user_ip=user_ip,
+                metadata={"device": device_info}
             )
             
             # Send notification about device deletion
@@ -848,11 +883,15 @@ class DeviceService:
             # Log activity
             status_text = "online" if is_online else "offline"
             await self.activity_service.log_activity(
-                activity_type="device_status_changed",
-                entity_id=device.hash_id,
+                activity_type="system_event",
+                action="device_status_changed",
+                description=f"Device {device.name} changed status to {status_text}",
+                target_type="device",
+                target_id=device.hash_id,
+                target_name=device.name,
                 user_id=user_id,
-                ip_address=user_ip,
-                details={
+                user_ip=user_ip,
+                metadata={
                     "device": device.name,
                     "new_status": status_text,
                     "previous_status": "online" if original_status else "offline"
@@ -895,9 +934,15 @@ class DeviceService:
         device = await self.get_device_by_id(device_id)
         if not device:
             return {"success": False, "error": "Device not found"}
-            
-        # Ensure device is online
-        if not device.is_online:
+        
+        # Log device status for debugging
+        logger.info(f"Device control request: device_id={device_id}, is_online={device.is_online}, action={action}")
+        
+        # Special handling for power actions
+        action_lower = action.lower()
+        
+        # Skip online check for turn_on/turn_off actions
+        if action_lower not in ["turn_on", "turn_off"] and not device.is_online:
             return {"success": False, "error": "Device is offline"}
             
         # Initialize parameters dict if not provided
@@ -936,15 +981,29 @@ class DeviceService:
             else:
                 # Generic device control
                 result = await self._control_generic(device, action, parameters, metadata)
-                
+            
+            # Update device online status based on power actions
+            if result and result.get("success", False):
+                action_lower = action.lower()
+                if action_lower == "turn_on":
+                    device.is_online = True
+                    await self.db.commit()
+                elif action_lower == "turn_off":
+                    device.is_online = False
+                    await self.db.commit()
+            
             # Log activity
             if result and result.get("success", False):
                 await self.activity_service.log_activity(
-                    activity_type="device_control",
-                    entity_id=device.hash_id,
+                    activity_type="user_action",
+                    action="device_control",
+                    description=f"Device {device.name} was controlled with action: {action}",
+                    target_type="device",
+                    target_id=device.hash_id,
+                    target_name=device.name,
                     user_id=user_id,
-                    ip_address=user_ip,
-                    details={
+                    user_ip=user_ip,
+                    metadata={
                         "device": device.name,
                         "action": action,
                         "parameters": parameters,
@@ -957,11 +1016,15 @@ class DeviceService:
             logger.error(f"Error controlling device {device_id}: {str(e)}")
             # Log error activity
             await self.activity_service.log_activity(
-                activity_type="device_control_error",
-                entity_id=device.hash_id,
+                activity_type="system_event",
+                action="device_control_error",
+                description=f"Error controlling device {device.name}: {str(e)}",
+                target_type="device",
+                target_id=device.hash_id,
+                target_name=device.name,
                 user_id=user_id,
-                ip_address=user_ip,
-                details={
+                user_ip=user_ip,
+                metadata={
                     "device": device.name,
                     "action": action,
                     "parameters": parameters,
@@ -969,6 +1032,61 @@ class DeviceService:
                 }
             )
             return {"success": False, "error": f"Control error: {str(e)}"}
+        
+    async def _control_generic(self, device: Device, action: str, parameters: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generic device control method that can handle any device type
+        
+        Args:
+            device: The device to control
+            action: The action to perform (turn_on, turn_off, etc.)
+            parameters: Additional parameters for the action
+            metadata: Metadata about the action
+            
+        Returns:
+            Dictionary with the result of the action
+        """
+        # Process common actions that apply to most devices
+        action = action.lower()
+        
+        if action == "turn_on":
+            # Simulate turning device on
+            return {
+                "success": True,
+                "state": {"power": True},
+                "message": f"Device {device.name} turned on"
+            }
+            
+        elif action == "turn_off":
+            # Simulate turning device off
+            return {
+                "success": True,
+                "state": {"power": False},
+                "message": f"Device {device.name} turned off"
+            }
+            
+        elif action == "restart":
+            # Simulate restarting device
+            return {
+                "success": True,
+                "state": {"power": True, "restarted": True},
+                "message": f"Device {device.name} restarted"
+            }
+            
+        elif action == "status":
+            # Return device status
+            return {
+                "success": True,
+                "state": {"power": True, "online": device.is_online},
+                "message": f"Device {device.name} status retrieved"
+            }
+        
+        else:
+            # Unknown action
+            return {
+                "success": False,
+                "error": f"Unsupported action '{action}' for device type '{device.device_type}'"
+            }
     
     async def _control_light(self, device: Device, action: str, 
                            parameters: Dict[str, Any], 
@@ -1151,11 +1269,13 @@ class DeviceService:
         if "zoom" not in current_state:
             current_state["zoom"] = 1.0  # 1.0 = no zoom
         if "pan" not in current_state:
-            current_state["pan"] = 0  # 0 = center
+            current_state["pan"] = 0  # -100 to 100
         if "tilt" not in current_state:
-            current_state["tilt"] = 0  # 0 = center
+            current_state["tilt"] = 0  # -100 to 100
         if "night_mode" not in current_state:
             current_state["night_mode"] = False
+        if "resolution" not in current_state:
+            current_state["resolution"] = "1080p"
             
         # Process action
         if action == "turn_on":
@@ -1233,15 +1353,15 @@ class DeviceService:
             current_state["night_mode"] = not current_state["night_mode"]
             result = {"success": True, "state": current_state}
         else:
-            return {"success": False, "error": f"Unknown action for camera: {action}"}
+            # For unsupported actions, fall back to generic control
+            return await self._control_generic(device, action, parameters, metadata)
             
         # Update device metadata with new state
         device_metadata["state"] = current_state
         device.device_metadata = device_metadata
-        await self.db.commit()
         
+        # Return success result
         return result
-    
     async def _control_speaker(self, device: Device, action: str, 
                              parameters: Dict[str, Any], 
                              metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -1254,19 +1374,11 @@ class DeviceService:
         if "power" not in current_state:
             current_state["power"] = False
         if "volume" not in current_state:
-            current_state["volume"] = 50  # 0-100
+            current_state["volume"] = 50  # 0-100 scale
         if "muted" not in current_state:
             current_state["muted"] = False
         if "playing" not in current_state:
             current_state["playing"] = False
-        if "equalizer" not in current_state:
-            current_state["equalizer"] = {
-                "bass": 50,
-                "mid": 50,
-                "treble": 50
-            }
-        if "current_track" not in current_state:
-            current_state["current_track"] = None
             
         # Process action
         if action == "turn_on":
@@ -1287,12 +1399,10 @@ class DeviceService:
                     return {"success": False, "error": "Volume must be between 0 and 100"}
                     
                 current_state["volume"] = volume
-                # If volume is set to 0, also mute
-                if volume == 0:
-                    current_state["muted"] = True
-                else:
+                # If volume > 0, unmute the speaker
+                if volume > 0:
                     current_state["muted"] = False
-                
+                    
                 result = {"success": True, "state": current_state}
             except ValueError:
                 return {"success": False, "error": "Invalid volume value"}
@@ -1302,47 +1412,30 @@ class DeviceService:
         elif action == "unmute":
             current_state["muted"] = False
             result = {"success": True, "state": current_state}
-        elif action == "toggle_mute":
-            current_state["muted"] = not current_state["muted"]
-            result = {"success": True, "state": current_state}
         elif action == "play":
             if not current_state["power"]:
                 return {"success": False, "error": "Speaker is powered off"}
                 
-            current_state["playing"] = True
-            
-            # Set track if provided
-            if "track" in parameters:
-                current_state["current_track"] = parameters["track"]
+            media_uri = parameters.get("media_uri")
+            if not media_uri:
+                return {"success": False, "error": "Missing media_uri parameter"}
                 
+            current_state["playing"] = True
+            current_state["media_uri"] = media_uri
             result = {"success": True, "state": current_state}
         elif action == "stop":
             current_state["playing"] = False
             result = {"success": True, "state": current_state}
-        elif action == "adjust_equalizer":
-            # Validate equalizer parameters
-            for channel in ["bass", "mid", "treble"]:
-                if channel in parameters:
-                    try:
-                        value = int(parameters[channel])
-                        if not (0 <= value <= 100):
-                            return {"success": False, "error": f"{channel} must be between 0 and 100"}
-                            
-                        current_state["equalizer"][channel] = value
-                    except ValueError:
-                        return {"success": False, "error": f"Invalid {channel} value"}
-                    
-            result = {"success": True, "state": current_state}
         else:
-            return {"success": False, "error": f"Unknown action for speaker: {action}"}
+            # For unsupported actions, fall back to generic control
+            return await self._control_generic(device, action, parameters, metadata)
             
         # Update device metadata with new state
         device_metadata["state"] = current_state
         device.device_metadata = device_metadata
-        await self.db.commit()
         
+        # Return success result
         return result
-    
     async def _control_lock(self, device: Device, action: str, 
                           parameters: Dict[str, Any], 
                           metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -1352,110 +1445,40 @@ class DeviceService:
         current_state = device_metadata.get("state", {})
         
         # Initialize with defaults if not present
+        if "power" not in current_state:
+            current_state["power"] = True  # Locks are typically always powered
         if "locked" not in current_state:
-            current_state["locked"] = True
+            current_state["locked"] = True  # Default to locked for safety
         if "battery" not in current_state:
-            current_state["battery"] = 100  # Percentage
-        if "tamper_detected" not in current_state:
-            current_state["tamper_detected"] = False
-        if "auto_lock_enabled" not in current_state:
-            current_state["auto_lock_enabled"] = True
-        if "auto_lock_timeout" not in current_state:
-            current_state["auto_lock_timeout"] = 30  # seconds
-        if "access_codes" not in current_state:
-            current_state["access_codes"] = []  # List of valid codes
+            current_state["battery"] = 100  # Battery level 0-100
             
         # Process action
         if action == "lock":
             current_state["locked"] = True
             result = {"success": True, "state": current_state}
         elif action == "unlock":
-            # Check for PIN if required
-            if device.device_model and "secure" in device.device_model.lower():
-                if "pin" not in parameters:
-                    return {"success": False, "error": "PIN required to unlock secure lock"}
+            # Validate authentication if provided
+            pin = parameters.get("pin")
+            if pin and pin != "1234":  # Simulated PIN validation
+                return {"success": False, "error": "Invalid PIN code"}
                 
-                # In a real implementation, we'd verify the PIN
-                # For this simulation, we just check if one was provided
-                if not parameters["pin"]:
-                    return {"success": False, "error": "Invalid PIN"}
-                    
             current_state["locked"] = False
             result = {"success": True, "state": current_state}
-        elif action == "toggle_lock":
-            # For toggle, we'll also require PIN for unlocking
-            if current_state["locked"] == True:
-                # Same PIN check as unlock
-                if device.device_model and "secure" in device.device_model.lower():
-                    if "pin" not in parameters:
-                        return {"success": False, "error": "PIN required to unlock secure lock"}
-                    
-                    # In a real implementation, we'd verify the PIN
-                    if not parameters["pin"]:
-                        return {"success": False, "error": "Invalid PIN"}
-                        
-            # Toggle the lock state
-            current_state["locked"] = not current_state["locked"]
-            result = {"success": True, "state": current_state}
-        elif action == "set_auto_lock":
-            # Validate auto_lock parameter
-            if "enabled" not in parameters:
-                return {"success": False, "error": "Missing 'enabled' parameter"}
-                
-            try:
-                enabled = bool(parameters["enabled"])
-                current_state["auto_lock_enabled"] = enabled
-                
-                # If timeout is provided, update that too
-                if "timeout" in parameters:
-                    try:
-                        timeout = int(parameters["timeout"])
-                        if not (5 <= timeout <= 300):  # 5 seconds to 5 minutes
-                            return {"success": False, "error": "Timeout must be between 5 and 300 seconds"}
-                            
-                        current_state["auto_lock_timeout"] = timeout
-                    except ValueError:
-                        return {"success": False, "error": "Invalid timeout value"}
-                    
-                result = {"success": True, "state": current_state}
-            except ValueError:
-                return {"success": False, "error": "Invalid 'enabled' value"}
-        elif action == "add_access_code":
-            # Validate code parameter
-            if "code" not in parameters:
-                return {"success": False, "error": "Missing access code parameter"}
-                
-            code = parameters["code"]
-            if not code or len(code) < 4:
-                return {"success": False, "error": "Invalid access code (must be at least 4 characters)"}
-                
-            # Check if code already exists
-            if code in current_state["access_codes"]:
-                return {"success": False, "error": "Access code already exists"}
-                
-            # Add the code
-            current_state["access_codes"].append(code)
-            result = {"success": True, "state": {"access_codes_count": len(current_state["access_codes"])}}
-        elif action == "remove_access_code":
-            # Validate code parameter
-            if "code" not in parameters:
-                return {"success": False, "error": "Missing access code parameter"}
-                
-            code = parameters["code"]
-            if code not in current_state["access_codes"]:
-                return {"success": False, "error": "Access code does not exist"}
-                
-            # Remove the code
-            current_state["access_codes"].remove(code)
-            result = {"success": True, "state": {"access_codes_count": len(current_state["access_codes"])}}
+        elif action == "get_status":
+            result = {
+                "success": True, 
+                "state": current_state,
+                "last_activity": datetime.utcnow().isoformat()
+            }
         else:
-            return {"success": False, "error": f"Unknown action for lock: {action}"}
+            # For unsupported actions, fall back to generic control
+            return await self._control_generic(device, action, parameters, metadata)
             
         # Update device metadata with new state
         device_metadata["state"] = current_state
         device.device_metadata = device_metadata
-        await self.db.commit()
         
+        # Return success result
         return result
     async def _control_switch(self, device: Device, action: str, 
                              parameters: Dict[str, Any], 
@@ -1469,59 +1492,59 @@ class DeviceService:
         if "power" not in current_state:
             current_state["power"] = False
         if "outlets" not in current_state:
-            # For multi-outlet switches
-            current_state["outlets"] = {
-                "1": False,
-                "2": False,
-                "3": False,
-                "4": False
-            }
+            # Default to a single outlet switch
+            current_state["outlets"] = {"main": False}
             
         # Process action
         if action == "turn_on":
             current_state["power"] = True
+            # Turn on all outlets
+            for outlet in current_state["outlets"]:
+                current_state["outlets"][outlet] = True
             result = {"success": True, "state": current_state}
         elif action == "turn_off":
             current_state["power"] = False
+            # Turn off all outlets
+            for outlet in current_state["outlets"]:
+                current_state["outlets"][outlet] = False
             result = {"success": True, "state": current_state}
         elif action == "toggle":
+            # Toggle main power and all outlets
             current_state["power"] = not current_state["power"]
+            for outlet in current_state["outlets"]:
+                current_state["outlets"][outlet] = current_state["power"]
             result = {"success": True, "state": current_state}
-        elif action == "set_outlet":
-            # Validate outlet parameters
+        elif action == "control_outlet":
+            # Validate outlet parameter
             if "outlet" not in parameters:
                 return {"success": False, "error": "Missing outlet parameter"}
-                
             if "state" not in parameters:
-                return {"success": False, "error": "Missing state parameter"}
+                return {"success": False, "error": "Missing state parameter for outlet"}
                 
-            outlet = str(parameters["outlet"])
+            outlet = parameters["outlet"]
             if outlet not in current_state["outlets"]:
-                return {"success": False, "error": f"Invalid outlet: {outlet}"}
+                return {"success": False, "error": f"Outlet '{outlet}' not found on this device"}
                 
+            # Update the specific outlet
             try:
                 outlet_state = bool(parameters["state"])
                 current_state["outlets"][outlet] = outlet_state
                 
-                # If any outlet is on, the overall power is on
-                if any(current_state["outlets"].values()):
-                    current_state["power"] = True
-                else:
-                    current_state["power"] = False
-                    
+                # Update main power status based on any active outlets
+                current_state["power"] = any(current_state["outlets"].values())
                 result = {"success": True, "state": current_state}
             except ValueError:
-                return {"success": False, "error": "Invalid state value"}
+                return {"success": False, "error": "Invalid outlet state value"}
         else:
-            return {"success": False, "error": f"Unknown action for switch: {action}"}
+            # For unsupported actions, fall back to generic control
+            return await self._control_generic(device, action, parameters, metadata)
             
         # Update device metadata with new state
         device_metadata["state"] = current_state
         device.device_metadata = device_metadata
-        await self.db.commit()
         
+        # Return success result
         return result
-    
     async def _control_sensor(self, device: Device, action: str, 
                             parameters: Dict[str, Any], 
                             metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -1900,13 +1923,15 @@ class DeviceService:
         await self.db.refresh(device)
         
         # Log the activity
-        activity_data = {
-            "action": "update",
-            "resource_type": "device",
-            "resource_id": device_id,
-            "details": {"updated_fields": list(update_data.keys())}
-        }
-        await self.activity_service.log_activity(activity_data)
+        await self.activity_service.log_activity(
+            activity_type="user_action",
+            action="device_updated",
+            description=f"Device {device.name} was updated",
+            target_type="device",
+            target_id=device_id,
+            target_name=device.name,
+            metadata={"updated_fields": list(update_data.keys())}
+        )
         
         return device
         

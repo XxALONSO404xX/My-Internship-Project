@@ -40,14 +40,47 @@ class EmailService:
     """Service for sending emails with retry mechanism"""
     
     def __init__(self):
-        # Email configuration from settings
+        # Initialize with empty values - will refresh before each send
+        self.smtp_server = None
+        self.smtp_port = None
+        self.smtp_username = None
+        self.smtp_password = None
+        self.use_tls = None
+        self.from_email = None
+        self.from_name = None
+        
+        # Force TLS for Gmail (always required)
+        self.is_gmail = False
+        
+        # Do initial refresh of credentials
+        self.refresh_credentials()
+        
+    def refresh_credentials(self):
+        """Refresh email credentials from settings"""
+        # Fetch the latest credentials from settings
         self.smtp_server = settings.SMTP_SERVER
         self.smtp_port = settings.SMTP_PORT
         self.smtp_username = settings.SMTP_USERNAME
         self.smtp_password = settings.SMTP_PASSWORD
-        self.use_tls = settings.SMTP_USE_TLS
         self.from_email = settings.EMAIL_FROM_ADDRESS
         self.from_name = settings.EMAIL_FROM_NAME
+        
+        # Check if using Gmail and force proper settings
+        self.is_gmail = 'gmail.com' in self.smtp_server.lower()
+        if self.is_gmail:
+            # Gmail always requires TLS/SSL
+            self.use_tls = True
+            # Set proper port if using default Gmail
+            if self.smtp_server == 'smtp.gmail.com' and self.smtp_port == 587:
+                logger.info("Using Gmail SMTP with STARTTLS")
+            elif self.smtp_server == 'smtp.gmail.com' and self.smtp_port == 465:
+                logger.info("Using Gmail SMTP with SSL")
+        else:
+            # For non-Gmail, use setting from config
+            self.use_tls = settings.SMTP_USE_TLS
+        
+        # Log credential refresh (without sensitive details)
+        logger.info(f"Email credentials refreshed for {self.from_email} using server {self.smtp_server}:{self.smtp_port} with TLS={self.use_tls}")
         
         # Queue for retrying failed emails
         self.retry_queue = []
@@ -78,6 +111,9 @@ class EmailService:
         Returns:
             Dictionary with result of sending
         """
+        # Refresh credentials before sending to ensure we have the latest
+        self.refresh_credentials()
+        
         try:
             # Check if email is configured
             if not self.smtp_server or not self.from_email:
@@ -120,19 +156,63 @@ class EmailService:
             part2 = MIMEText(body_html, 'html')
             msg.attach(part2)
             
-            # Connect to SMTP server and send
-            if self.use_tls:
-                context = ssl.create_default_context()
-                with smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context) as server:
-                    if self.smtp_username and self.smtp_password:
-                        server.login(self.smtp_username, self.smtp_password)
-                    server.send_message(msg)
-            else:
-                with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                    server.ehlo()
-                    if self.smtp_username and self.smtp_password:
-                        server.login(self.smtp_username, self.smtp_password)
-                    server.send_message(msg)
+            # Connect to SMTP server with Gmail-specific handling
+            try:
+                # Gmail-specific connection handling
+                if self.is_gmail:
+                    if self.smtp_port == 587:
+                        # Use STARTTLS for port 587 (Gmail standard)
+                        logger.info(f"Using Gmail STARTTLS connection method on port 587")
+                        server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+                        server.ehlo()
+                        server.starttls()
+                        server.ehlo()
+                    elif self.smtp_port == 465:
+                        # Use direct SSL for port 465
+                        logger.info(f"Using Gmail direct SSL connection method on port 465")
+                        context = ssl.create_default_context()
+                        server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context)
+                    else:
+                        # Fall back to standard TLS for other ports
+                        logger.warning(f"Unusual port {self.smtp_port} for Gmail - attempting TLS connection")
+                        context = ssl.create_default_context()
+                        server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context)
+                else:
+                    # Non-Gmail connection handling
+                    if self.use_tls and self.smtp_port == 465:
+                        # Direct SSL connection
+                        logger.info(f"Using direct SSL connection to {self.smtp_server}:{self.smtp_port}")
+                        context = ssl.create_default_context()
+                        server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context)
+                    elif self.use_tls:
+                        # STARTTLS for TLS on other ports
+                        logger.info(f"Using STARTTLS connection to {self.smtp_server}:{self.smtp_port}")
+                        server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+                        server.ehlo()
+                        server.starttls()
+                        server.ehlo()
+                    else:
+                        # Plain connection
+                        logger.info(f"Using plain connection to {self.smtp_server}:{self.smtp_port}")
+                        server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+                        server.ehlo()
+                
+                # Login and send
+                if self.smtp_username and self.smtp_password:
+                    logger.info(f"Attempting login for {self.smtp_username}")
+                    server.login(self.smtp_username, self.smtp_password)
+                    logger.info(f"SMTP login successful for {self.smtp_username}")
+                
+                logger.info(f"Sending email to {to_email} with subject '{subject}'")
+                server.send_message(msg)
+                logger.info(f"Email sent successfully to {to_email}")
+                
+                # Close connection
+                server.quit()
+                
+            except Exception as smtp_error:
+                logger.error(f"SMTP Error: {str(smtp_error)}", exc_info=True)
+                raise
                     
             logger.info(f"Email sent to {to_email}: {subject}")
             return {
@@ -229,6 +309,124 @@ class EmailService:
             
         finally:
             self.is_processing_queue = False
+    
+    async def send_verification_email(self, email: str, username: str, token: str) -> Dict[str, Any]:
+        """Send email verification email
+        
+        Args:
+            email: Recipient email address
+            username: Username of the recipient
+            token: Verification token
+            
+        Returns:
+            Result of sending the email
+        """
+        subject = "Verify Your IoT Platform Account"
+        
+        # Create HTML body
+        # Using hash-based routing format that the frontend expects (#verify/token)
+        verification_url = f"{settings.FRONTEND_URL}/#verify/{token}"
+        body_html = f"""
+        <html>
+        <body>
+            <h2>IoT Platform Account Verification</h2>
+            <p>Hello {username},</p>
+            <p>Thank you for registering! Please verify your email address by clicking the link below:</p>
+            <p><a href="{verification_url}">Verify Email</a></p>
+            <p>If you didn't register for an IoT Platform account, please ignore this email.</p>
+            <p>The verification link will expire in 24 hours.</p>
+            <p>Regards,<br>IoT Platform Team</p>
+        </body>
+        </html>
+        """
+        
+        # Create plain text body
+        body_text = f"""
+        IoT Platform Account Verification
+        
+        Hello {username},
+        
+        Thank you for registering! Please verify your email address by visiting the link below:
+        
+        {verification_url}
+        
+        If you didn't register for an IoT Platform account, please ignore this email.
+        
+        The verification link will expire in 24 hours.
+        
+        Regards,
+        IoT Platform Team
+        """
+        
+        # Send the email
+        result = await self.send_email(
+            to_email=email,
+            subject=subject,
+            body_html=body_html,
+            body_text=body_text,
+            retry_on_failure=True
+        )
+        
+        return result
+    
+    async def send_password_reset_email(self, email: str, username: str, token: str) -> Dict[str, Any]:
+        """Send password reset email
+        
+        Args:
+            email: Recipient email address
+            username: Username of the recipient
+            token: Password reset token
+            
+        Returns:
+            Result of sending the email
+        """
+        subject = "Reset Your IoT Platform Password"
+        
+        # Create HTML body
+        # Using hash-based routing format that the frontend expects (#reset-password/token)
+        reset_url = f"{settings.FRONTEND_URL}/#reset-password/{token}"
+        body_html = f"""
+        <html>
+        <body>
+            <h2>IoT Platform Password Reset</h2>
+            <p>Hello {username},</p>
+            <p>We received a request to reset your password. If you did not make this request, please ignore this email.</p>
+            <p>To reset your password, click the link below:</p>
+            <p><a href="{reset_url}">Reset Password</a></p>
+            <p>The reset link will expire in 1 hour.</p>
+            <p>Regards,<br>IoT Platform Team</p>
+        </body>
+        </html>
+        """
+        
+        # Create plain text body
+        body_text = f"""
+        IoT Platform Password Reset
+        
+        Hello {username},
+        
+        We received a request to reset your password. If you did not make this request, please ignore this email.
+        
+        To reset your password, visit the link below:
+        
+        {reset_url}
+        
+        The reset link will expire in 1 hour.
+        
+        Regards,
+        IoT Platform Team
+        """
+        
+        # Send the email
+        result = await self.send_email(
+            to_email=email,
+            subject=subject,
+            body_html=body_html,
+            body_text=body_text,
+            retry_on_failure=True
+        )
+        
+        return result
 
 
 #

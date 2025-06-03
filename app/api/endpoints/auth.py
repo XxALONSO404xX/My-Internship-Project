@@ -316,15 +316,18 @@ async def forgot_password(
 ):
     """
     Request password reset email
+    
+    This endpoint clearly informs users if an account exists or not, providing
+    direct feedback about the status of their password reset request.
     """
     # Use the AuthService to handle password reset request
     auth_service = AuthService(db)
     success, message = await auth_service.handle_password_reset_request(reset_request.email)
     
-    # Return standardized response
+    # Return clear response about whether the account exists and the status of the request
     return AuthResponse(
         status="success" if success else "error",
-        message=message,
+        message=message,  # This will be a clear message about account existence
         data={"email": reset_request.email} if success else None
     )
 

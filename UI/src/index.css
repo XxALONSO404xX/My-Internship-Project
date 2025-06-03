@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100;
+    -webkit-app-region: drag;
+  }
+  
+  button, input, a, [role="button"] {
+    -webkit-app-region: no-drag;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white dark:bg-gray-800 rounded-lg shadow-md p-4;
+  }
+  
+  .btn {
+    @apply px-4 py-2 rounded-md font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-opacity-50;
+  }
+  
+  .btn-primary {
+    @apply btn bg-primary text-white hover:bg-blue-600 focus:ring-blue-500;
+  }
+  
+  .btn-secondary {
+    @apply btn bg-secondary text-white hover:bg-green-600 focus:ring-green-500;
+  }
+  
+  .btn-danger {
+    @apply btn bg-danger text-white hover:bg-red-600 focus:ring-red-500;
+  }
+  
+  .input {
+    @apply px-3 py-2 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary;
+  }
+
+  .device-card {
+    @apply card hover:shadow-lg transition-shadow cursor-pointer;
+  }
+  
+  .device-online {
+    @apply text-device-online;
+  }
+  
+  .device-offline {
+    @apply text-device-offline;
+  }
+}

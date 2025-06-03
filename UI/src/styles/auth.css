@@ -1,0 +1,429 @@
+.auth-container {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  background-color: var(--bg-secondary);
+  transition: background-color var(--transition-speed) var(--animation-curve);
+}
+
+.auth-sidebar {
+  width: 40%;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+
+.sidebar-content {
+  position: relative;
+  z-index: 1;
+  max-width: 400px;
+}
+
+.auth-sidebar h1 {
+  font-size: 2.5rem;
+  margin-bottom: 1.5rem;
+  font-weight: 700;
+}
+
+.auth-sidebar p {
+  font-size: 1.1rem;
+  margin-bottom: 2rem;
+  line-height: 1.6;
+  opacity: 0.9;
+}
+
+.sidebar-decoration {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-decoration:nth-child(1) {
+  width: 300px;
+  height: 300px;
+  bottom: -150px;
+  left: -150px;
+}
+
+.sidebar-decoration:nth-child(2) {
+  width: 200px;
+  height: 200px;
+  top: 10%;
+  right: -100px;
+}
+
+.sidebar-decoration:nth-child(3) {
+  width: 100px;
+  height: 100px;
+  top: 40%;
+  left: 20%;
+}
+
+.auth-form-container {
+  width: 60%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+}
+
+.auth-form {
+  width: 100%;
+  max-width: 450px;
+  padding: 2.5rem;
+  background-color: var(--card-bg);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px var(--shadow-color);
+  transition: all var(--transition-speed) var(--animation-curve);
+}
+
+.auth-form-header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.auth-form-header h2 {
+  font-size: 1.8rem;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.auth-form-header p {
+  color: var(--text-secondary);
+  font-size: 1rem;
+}
+
+.form-group {
+  margin-bottom: 1.5rem;
+  position: relative;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.form-control {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 1rem;
+  outline: none;
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  transition: border-color var(--transition-speed) var(--animation-curve),
+              box-shadow var(--transition-speed) var(--animation-curve);
+}
+
+.form-control:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.25);
+}
+
+.password-toggle {
+  position: absolute;
+  right: 1rem;
+  top: 2.4rem;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.auth-btn {
+  display: block;
+  width: 100%;
+  padding: 0.875rem;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  border-radius: 8px;
+  border: none;
+  background-color: var(--accent-primary);
+  color: white;
+  cursor: pointer;
+  transition: background-color var(--transition-speed) var(--animation-curve),
+              transform 0.1s var(--animation-curve);
+}
+
+.auth-btn:hover {
+  background-color: var(--accent-secondary);
+}
+
+.auth-btn:active {
+  transform: scale(0.98);
+}
+
+.auth-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-btn.loading {
+  position: relative;
+  color: transparent;
+}
+
+.auth-btn.loading::after {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  top: 50%;
+  left: 50%;
+  margin-left: -10px;
+  margin-top: -10px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  border-top-color: white;
+  animation: spin 0.8s infinite linear;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Fade-in animation */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Slide-up animation */
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Slide-in animation (from left) */
+@keyframes slideIn {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Pulse animation for icons and elements */
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+/* Shake animation for error states */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-2px) rotate(-2deg); }
+  40% { transform: translateX(2px) rotate(2deg); }
+  60% { transform: translateX(-2px) rotate(-1deg); }
+  80% { transform: translateX(2px) rotate(1deg); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Animation class applications */
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+.fade-in-delayed {
+  opacity: 0;
+  animation: fadeIn 0.5s ease-out 0.3s forwards;
+}
+
+.slide-up {
+  animation: slideUp 0.5s ease-out forwards;
+}
+
+.slide-up-delayed {
+  opacity: 0;
+  animation: slideUp 0.5s ease-out 0.3s forwards;
+}
+
+.slide-in {
+  animation: slideIn 0.5s ease-out forwards;
+}
+
+.slide-in-delayed-1 {
+  opacity: 0;
+  animation: slideIn 0.5s ease-out 0.2s forwards;
+}
+
+.slide-in-delayed-2 {
+  opacity: 0;
+  animation: slideIn 0.5s ease-out 0.4s forwards;
+}
+
+.slide-in-delayed-3 {
+  opacity: 0;
+  animation: slideIn 0.5s ease-out 0.6s forwards;
+}
+
+.pulse-animation {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.shake-animation {
+  animation: shake 0.8s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .fade-in, .fade-in-delayed, .slide-up, .slide-up-delayed, .slide-in, 
+  .slide-in-delayed-1, .slide-in-delayed-2, .slide-in-delayed-3, 
+  .pulse-animation, .shake-animation {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.auth-links {
+  margin-top: 1.5rem;
+  text-align: center;
+}
+
+.auth-link {
+  color: var(--accent-primary);
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: color var(--transition-speed) var(--animation-curve);
+}
+
+.auth-link:hover {
+  color: var(--accent-secondary);
+  text-decoration: underline;
+}
+
+.form-error {
+  color: var(--accent-danger);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.form-success {
+  color: var(--accent-success);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.theme-toggle {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 50%;
+  transition: background-color var(--transition-speed) var(--animation-curve);
+}
+
+.theme-toggle:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  margin: 1.5rem 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background-color: var(--border-color);
+}
+
+.divider::before {
+  margin-right: 1rem;
+}
+
+.divider::after {
+  margin-left: 1rem;
+}
+
+.social-login {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.social-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: none;
+  cursor: pointer;
+  transition: background-color var(--transition-speed) var(--animation-curve);
+}
+
+.social-btn:hover {
+  background-color: var(--accent-primary);
+  color: white;
+}
+
+/* Mobile Responsive Design */
+@media (max-width: 992px) {
+  .auth-container {
+    flex-direction: column;
+  }
+  
+  .auth-sidebar,
+  .auth-form-container {
+    width: 100%;
+  }
+  
+  .auth-sidebar {
+    padding: 4rem 2rem;
+  }
+}
+
+/* Animation sequence for form elements */
+.auth-form .form-group:nth-child(1) {
+  animation-delay: 0.1s;
+}
+
+.auth-form .form-group:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.auth-form .form-group:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.auth-form .auth-btn {
+  animation-delay: 0.4s;
+}
+
+.auth-form .auth-links {
+  animation-delay: 0.5s;
+}

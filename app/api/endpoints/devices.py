@@ -151,7 +151,21 @@ async def control_device(device_id: str, action: str, parameters: Optional[Dict[
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=result.get("error", "Control failed")
             )
-        return result
+            
+        # Format the response to match DeviceControlResponse schema
+        formatted_response = {
+            "device_id": device_id,
+            "action": action,
+            "success": result.get("success", False),
+            "message": result.get("message", f"Successfully executed {action} on device"),
+            "timestamp": datetime.utcnow(),
+            "result": {
+                "state": result.get("state", {}),
+                **{k: v for k, v in result.items() if k not in ["success", "message", "state", "error"]}
+            }
+        }
+        
+        return formatted_response
     except HTTPException:
         raise
     except Exception as e:
