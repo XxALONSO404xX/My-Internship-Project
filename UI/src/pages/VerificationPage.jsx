@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useContext, useRef } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
 import { ThemeContext } from '../contexts/ThemeContext';
 import { trackEvent } from '../services/analytics-service';
@@ -9,11 +9,17 @@ import ThemeToggle from '../components/ThemeToggle';
 import '../styles/theme.css';
 import '../styles/auth.css';
 
+// Add React Router hook for navigation
+import { useNavigate, useParams } from 'react-router-dom';
+
 /**
  * Verification Page Component
  * Handles email verification and verification requests
  */
-export default function VerificationPage({ token, email, onSuccess, onCancel }) {
+export default function VerificationPage({ email, onSuccess, onCancel }) {
+  // Get token from URL params
+  const { token } = useParams();
+
   // Get authentication context
   const { 
     sendVerificationEmail, 
@@ -34,6 +40,9 @@ export default function VerificationPage({ token, email, onSuccess, onCancel }) 
   const [countdown, setCountdown] = useState(5); // Increased countdown timer for redirect
   const [progressValue, setProgressValue] = useState(100); // Progress bar value
   const confettiRef = useRef(null); // Ref for confetti animation
+
+  // React Router navigate hook
+  const navigate = useNavigate();
 
   // Sync context error with component error
   useEffect(() => {
@@ -65,7 +74,11 @@ export default function VerificationPage({ token, email, onSuccess, onCancel }) 
         success: true,
         timestamp: new Date().toISOString()
       });
-      window.location.hash = 'login';
+      if (navigate) {
+        navigate('/login');
+      } else {
+        window.location.hash = 'login';
+      }
     }
     
     return () => {
@@ -177,11 +190,15 @@ export default function VerificationPage({ token, email, onSuccess, onCancel }) 
           trackEvent('auth_verification_already_verified', {
             timestamp: new Date().toISOString()
           });
-        } else if (result?.message?.toLowerCase().includes('invalid token') || 
-                  result?.message?.toLowerCase().includes('expired')) {
+        } else if (
+            result?.message?.toLowerCase().includes('invalid token') ||
+            result?.message?.toLowerCase().includes('expired') ||
+            result?.message?.toLowerCase().includes('bad request') ||
+            result?.message?.toLowerCase().includes('400')
+        ) {
           setError(
             <div className="space-y-2">
-              <p className="font-medium">The verification link is no longer valid</p>
+              <p className="font-medium">Invalid link used or expired</p>
               <p className="text-sm">This may be because:</p>
               <ul className="list-disc ml-5 text-sm">
                 <li>The link has expired (valid for 24 hours)</li>
@@ -429,7 +446,11 @@ export default function VerificationPage({ token, email, onSuccess, onCancel }) 
       status: verificationSuccess ? 'after_success' : 'before_completion',
       timestamp: new Date().toISOString()
     });
-    window.location.hash = 'login';
+    if (navigate) {
+      navigate('/login');
+    } else {
+      window.location.hash = 'login';
+    }
   };
 
   // Get theme context
@@ -558,78 +579,7 @@ export default function VerificationPage({ token, email, onSuccess, onCancel }) 
               
               <div>
                 <span className="font-medium text-blue-800 dark:text-blue-100">Sending verification email...</span>
-                <p className="text-xs text-blue-600 dark:text-blue-300/80 mt-1 flex items-center">
-                  <span className="inline-block w-1 h-1 rounded-full bg-blue-500 dark:bg-blue-400 mr-1 animate-pulse"></span>
-                  <span className="inline-block w-1 h-1 rounded-full bg-blue-500 dark:bg-blue-400 mr-1 animate-pulse" style={{animationDelay: '0.2s'}}></span>
-                  <span className="inline-block w-1 h-1 rounded-full bg-blue-500 dark:bg-blue-400 mr-2 animate-pulse" style={{animationDelay: '0.4s'}}></span>
-                  This may take a few moments
-                </p>
-              </div>
-            </div>
-          )}
-          
-          {/* Email verification request success message with improved UX */}
-          {verificationSent && !verificationSuccess && (
-            <div className="p-5 bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/40 dark:to-green-800/30 border border-green-300 dark:border-green-600/70 rounded-lg text-green-700 dark:text-green-200 shadow-md slide-up fade-in">
-              <div className="flex items-start">
-                <div className="flex-shrink-0 bg-green-100 dark:bg-green-700/60 p-2 rounded-full shadow-inner">
-                  <svg className="h-8 w-8 text-green-500 dark:text-green-300 pulse-animation" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <div className="ml-4">
-                  <h3 className="text-lg font-bold text-green-800 dark:text-green-100">Verification Email Sent!</h3>
-                  <p className="mt-2 text-sm dark:text-green-200">We've sent an email to <span className="font-medium underline decoration-dotted">{emailInput}</span> with a verification link.</p>
-                  
-                  <div className="mt-4 border-t border-green-200 dark:border-green-600/70 pt-3">
-                    <p className="text-sm font-medium flex items-center text-green-700 dark:text-green-200">
-                      <svg className="w-4 h-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
-                      </svg>
-                      Next steps:
-                    </p>
-                    <ol className="list-decimal pl-6 mt-2 text-sm space-y-2 text-green-700 dark:text-green-200">
-                      <li className="slide-in-delayed-1 py-1">Open your email inbox</li>
-                      <li className="slide-in-delayed-2 py-1">Click the verification link in the email</li>
-                      <li className="slide-in-delayed-3 py-1">Return here to complete sign-in</li>
-                    </ol>
-                  </div>
-                  
-                  <div className="mt-4 border-t border-green-200 dark:border-green-600/70 pt-3">
-                    <p className="text-sm font-medium flex items-center text-green-700 dark:text-green-200">
-                      <svg className="w-4 h-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Can't find the email?
-                    </p>
-                    <ul className="list-disc pl-6 mt-2 text-sm space-y-1.5 text-green-700 dark:text-green-200">
-                      <li className="py-0.5">Check your spam/junk folder</li>
-                      <li className="py-0.5">Gmail users: Check the "Promotions" or "Updates" tabs</li>
-                      <li className="py-0.5">Wait a couple of minutes for the email to arrive</li>
-                    </ul>
-                    
-                    <div className="mt-4 flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-                      <button 
-                        onClick={handleTryAgain} 
-                        className="inline-flex items-center px-3 py-2 border border-green-500 dark:border-green-400/70 text-sm leading-4 font-medium rounded-md text-green-700 dark:text-green-100 bg-green-100 dark:bg-green-800/80 hover:bg-green-200 dark:hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 dark:focus:ring-green-400 transition-all duration-150 transform hover:scale-105 active:scale-95 shadow-sm hover:shadow"
-                      >
-                        <svg className="-ml-0.5 mr-1.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                        </svg>
-                        Try Again with Different Email
-                      </button>
-                      <button 
-                        onClick={handleBackToLogin}
-                        className="inline-flex items-center px-3 py-2 border border-green-500 dark:border-green-400/70 text-sm leading-4 font-medium rounded-md text-green-700 dark:text-green-100 bg-green-50 dark:bg-green-900/60 hover:bg-green-100 dark:hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 dark:focus:ring-green-400 transition-all duration-150 transform hover:scale-105 active:scale-95 shadow-sm hover:shadow"
-                      >
-                        <svg className="-ml-0.5 mr-1.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-                        </svg>
-                        Return to Login
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <p className="text-xs mt-1 text-blue-600 dark:text-blue-300">Connecting to authentication service...</p>
               </div>
             </div>
           )}
@@ -729,7 +679,7 @@ export default function VerificationPage({ token, email, onSuccess, onCancel }) 
                         className="inline-flex justify-center items-center px-4 py-2.5 border border-red-200 dark:border-red-500/50 text-sm font-medium rounded-md text-red-600 dark:text-red-300 bg-white dark:bg-red-900/30 hover:bg-red-50 dark:hover:bg-red-800/40 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:ring-offset-gray-800 focus:ring-red-500 dark:focus:ring-red-400 transition-all duration-200 transform hover:scale-105 active:scale-95 shadow-sm hover:shadow w-full md:w-auto"
                       >
                         <svg className="w-5 h-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
                         </svg>
                         Return to Login
                       </button>
@@ -768,7 +718,7 @@ export default function VerificationPage({ token, email, onSuccess, onCancel }) 
             <div className="mt-4">
               <button
                 onClick={handleRetryVerification}
-                className="inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-600 dark:to-blue-700 hover:from-blue-600 hover:to-blue-700 dark:hover:from-blue-500 dark:hover:to-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:ring-offset-gray-800 focus:ring-blue-500 dark:focus:ring-blue-400 transition-all duration-200 transform hover:scale-105 active:scale-95 shadow hover:shadow-md"
+                className="inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-600 dark:to-blue-700 hover:from-blue-600 hover:to-blue-700 dark:hover:from-blue-500 dark:hover:to-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition-all duration-200 transform hover:scale-105 active:scale-95 shadow hover:shadow-md"
               >
                 <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
@@ -799,7 +749,7 @@ export default function VerificationPage({ token, email, onSuccess, onCancel }) 
                   trackEvent('auth_login_from_already_verified');
                   handleBackToLogin();
                 }}
-                className="inline-flex justify-center items-center px-5 py-3 border border-transparent text-sm font-medium rounded-lg shadow-lg text-white bg-gradient-to-r from-green-500 to-green-600 dark:from-green-600 dark:to-green-700 hover:from-green-600 hover:to-green-700 dark:hover:from-green-500 dark:hover:to-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-200 transform hover:scale-105 active:scale-95 hover:shadow-xl"
+                className="inline-flex justify-center items-center px-5 py-3 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-green-500 to-green-600 dark:from-green-600 dark:to-green-700 hover:from-green-600 hover:to-green-700 dark:hover:from-green-500 dark:hover:to-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-200 transform hover:scale-105 active:scale-95 hover:shadow-xl"
               >
                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
@@ -841,7 +791,7 @@ export default function VerificationPage({ token, email, onSuccess, onCancel }) 
                   type="email"
                   autoComplete="email"
                   required
-                  className="peer appearance-none block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 sm:text-sm bg-white dark:bg-gray-700/90 text-gray-900 dark:text-white transition-colors duration-200"
+                  className="peer appearance-none block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-500 sm:text-sm bg-white dark:bg-gray-700/90 text-gray-900 dark:text-white transition-colors duration-200"
                   placeholder="you@example.com"
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}

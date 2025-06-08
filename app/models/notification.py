@@ -23,7 +23,7 @@ class Notification(Base):
     
     # Target details (what the notification is about)
     target_type = Column(String(50), nullable=True, index=True)  # "device", "user", "group", etc
-    target_id = Column(Integer, nullable=True)  # ID of target if applicable
+    target_id = Column(String(64), nullable=True)  # ID of target if applicable (e.g. device hash_id)
     target_name = Column(String(255), nullable=True)  # Human readable name of target
     
     # These fields are stored as JSON but managed through the application

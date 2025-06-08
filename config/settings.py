@@ -76,7 +76,11 @@ class Settings(BaseSettings):
     TWILIO_ACCOUNT_SID: Optional[str] = os.getenv('TWILIO_ACCOUNT_SID', '')
     TWILIO_AUTH_TOKEN: Optional[str] = os.getenv('TWILIO_AUTH_TOKEN', '')
     TWILIO_PHONE_NUMBER: Optional[str] = os.getenv('TWILIO_PHONE_NUMBER', '')
-    
+
+    # Default notification recipients
+    DEFAULT_NOTIFICATION_EMAIL: Optional[str] = os.getenv('DEFAULT_NOTIFICATION_EMAIL', '')
+    DEFAULT_NOTIFICATION_PHONE: Optional[str] = os.getenv('DEFAULT_NOTIFICATION_PHONE', '')
+
     # Server settings
     HOST: str = os.getenv('HOST', '0.0.0.0')
     PORT: str = os.getenv('PORT', '8000')

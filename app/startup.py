@@ -55,3 +55,32 @@ async def run_startup_tasks(db: AsyncSession):
     logger.info("Starting vulnerability initialization...")
     asyncio.create_task(vulnerability_initializer())
     logger.info("Vulnerability initialization task scheduled")
+
+    # Seed firmware table if empty
+    try:
+        from app.services.firmware_service import FirmwareService
+        from app.models.device import Device
+        from sqlalchemy import select
+        firmware_service = FirmwareService(db)
+        existing_fw = await firmware_service.get_all_firmware()
+        if not existing_fw:
+            # fetch distinct device types
+            res = await db.execute(select(Device.device_type).distinct())
+            types = [row[0] for row in res.all()]
+            for dtype in types:
+                # baseline firmware
+                await firmware_service.create_firmware(
+                    version="1.0.0",
+                    name=f"{dtype} Firmware v1.0.0",
+                    device_type=dtype
+                )
+                # critical update
+                await firmware_service.create_firmware(
+                    version="1.1.0",
+                    name=f"{dtype} Firmware v1.1.0",
+                    device_type=dtype,
+                    is_critical=True
+                )
+            logger.info(f"Seeded firmware for types: {types}")
+    except Exception as e:
+        logger.error(f"Firmware seeding error: {e}")

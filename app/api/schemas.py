@@ -99,7 +99,13 @@ class ActivityBase(BaseModel):
     target_name: Optional[str] = Field(None, description="Name of the affected entity")
     previous_state: Optional[Dict[str, Any]] = Field(None, description="State before the action")
     new_state: Optional[Dict[str, Any]] = Field(None, description="State after the action")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Any additional context data")
+    metadata: Optional[Dict[str, Any]] = Field(None, alias="activity_metadata", description="Any additional context data")
+    
+    class Config:
+        orm_mode = True
+        allow_population_by_field_name = True
+        populate_by_name = True  # allows alias usage
+        from_attributes = True
 
 class ActivityCreate(ActivityBase):
     user_id: Optional[int] = Field(None, description="ID of the user who performed the action")
@@ -389,23 +395,25 @@ class RuleBase(BaseModel):
     is_enabled: bool = Field(True, description="Whether the rule is enabled")
     schedule: Optional[str] = Field(None, description="Cron expression for scheduled rules")
     priority: Optional[int] = Field(1, description="Priority of the rule (higher = higher priority)")
-    target_device_ids: Optional[List[int]] = Field(None, description="List of device IDs this rule applies to (null means all)")
+    target_device_ids: Optional[List[str]] = Field(None, description="List of device hash IDs this rule applies to (null means all)")
 
 class RuleCreate(RuleBase):
-    conditions: Dict[str, Any] = Field(..., description="Conditions that trigger the rule")
+    conditions: Optional[Dict[str, Any]] = Field(None, description="Conditions that trigger the rule")
     actions: List[Dict[str, Any]] = Field(..., description="Actions to take when conditions are met")
     
     @validator('conditions')
     def validate_conditions(cls, v):
+        if v is None:
+            return v
         if "operator" not in v:
             raise ValueError("Conditions must have an operator (AND/OR)")
         
         if v["operator"] not in ["AND", "OR"]:
             raise ValueError(f"Invalid operator: {v['operator']}. Must be 'AND' or 'OR'")
             
-        if "conditions" not in v or not v["conditions"]:
-            raise ValueError("Conditions must have at least one condition")
-            
+        if "conditions" in v and not v["conditions"]:
+            raise ValueError("Conditions must have at least one condition or be omitted")
+         
         return v
         
     @validator('actions')
@@ -445,11 +453,11 @@ class RuleUpdate(BaseModel):
     conditions: Optional[Dict[str, Any]] = Field(None, description="Conditions that trigger the rule")
     actions: Optional[List[Dict[str, Any]]] = Field(None, description="Actions to take when conditions are met")
     priority: Optional[int] = Field(None, description="Priority of the rule (higher = higher priority)")
-    target_device_ids: Optional[List[int]] = Field(None, description="List of device IDs this rule applies to (null means all)")
+    target_device_ids: Optional[List[str]] = Field(None, description="List of device hash IDs this rule applies to (null means all)")
 
 class RuleData(RuleBase):
     id: int
-    conditions: Dict[str, Any]
+    conditions: Optional[Dict[str, Any]] = None
     actions: List[Dict[str, Any]]
     last_triggered: Optional[datetime] = None
     status: str

@@ -42,6 +42,9 @@ class Device(Base):
     cert_issued_by = Column(String(255))  # Certificate issuer
     cert_strength = Column(Integer, default=2048)  # Certificate strength (bits)
     
+    # Firmware check timestamp
+    last_firmware_check = Column(DateTime)  # When firmware was last verified
+    
     # Discovery method
     discovery_method = Column(String(50))  # zeroconf, nmap, mqtt, manual
     discovery_info = Column(JSON, default=dict)  # Additional discovery info
@@ -70,6 +73,11 @@ class Device(Base):
     
     def __repr__(self):
         return f"<Device {self.name} ({self.ip_address})>"
+    
+    @property
+    def id(self) -> str:
+        """Alias for hash_id"""
+        return self.hash_id
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert device to dictionary for API responses"""

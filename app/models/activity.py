@@ -27,7 +27,7 @@ class Activity(Base):
     
     # What it affected
     target_type = Column(String(50), index=True)  # device, group, system
-    target_id = Column(Integer, nullable=True, index=True)  # ID of the affected entity
+    target_id = Column(String(64), nullable=True, index=True)  # ID of the affected entity (device hash_id)
     target_name = Column(String(255), nullable=True)  # Name of the affected entity
     
     # Before/after state

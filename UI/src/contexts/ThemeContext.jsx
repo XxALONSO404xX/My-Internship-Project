@@ -1,8 +1,12 @@
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useContext } from 'react';
+import { useColorMode } from '@chakra-ui/react';
 
+// Theme context for synchronizing Tailwind dark mode and Chakra UI color mode
 export const ThemeContext = createContext();
 
 export const ThemeProvider = ({ children }) => {
+  const { colorMode: chakraColorMode, toggleColorMode: toggleChakra } = useColorMode();
+
   // Check for user preference in localStorage or system preference
   const getInitialTheme = () => {
     const savedTheme = localStorage.getItem('theme');
@@ -42,6 +46,10 @@ export const ThemeProvider = ({ children }) => {
     } else {
       document.documentElement.classList.remove('dark');
       document.documentElement.removeAttribute('data-theme');
+    }
+    // Sync Chakra UI color mode
+    if (chakraColorMode !== theme) {
+      toggleChakra();
     }
   }, [theme]);
   

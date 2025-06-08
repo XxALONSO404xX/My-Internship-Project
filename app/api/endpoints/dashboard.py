@@ -174,7 +174,7 @@ async def get_security_overview(
     """
     # Query for TLS support statistics
     tls_query = select(
-        func.count(Device.id).label("total"),
+        func.count(Device.hash_id).label("total"),
         func.sum(case((Device.supports_tls == True, 1), else_=0)).label("tls_enabled"),
         func.sum(case((and_(Device.supports_tls == True, Device.tls_version == "TLS 1.3"), 1), else_=0)).label("tls_1_3"),
         func.sum(case((and_(Device.supports_tls == True, Device.tls_version == "TLS 1.2"), 1), else_=0)).label("tls_1_2"),

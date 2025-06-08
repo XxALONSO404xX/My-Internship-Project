@@ -1,7 +1,7 @@
 """Activity tracking service for the IoT Platform"""
 import logging
 from typing import Dict, List, Optional, Any, Union
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import desc
@@ -58,23 +58,13 @@ class ActivityService:
             else:
                 logger.warning(f"Non-integer user_id provided: {user_id}, setting to None to prevent DB errors")
                 
-        # Convert string target_id to None if it's not an integer
-        effective_target_id = None
-        if target_id is not None:
-            if isinstance(target_id, int):
-                effective_target_id = target_id
-            # If target_id is a string but can be converted to an integer, use that
-            elif isinstance(target_id, str) and target_id.isdigit():
-                effective_target_id = int(target_id)
-            else:
-                logger.warning(f"Non-integer target_id provided: {target_id}, setting to None to prevent DB errors")
+        # Accept target_id as string or int (device hash IDs supported)
+        effective_target_id = target_id
         
-        # Add the original IDs to metadata for reference
+        # Add the original user_id to metadata if conversion occurred
         meta_dict = metadata or {}
         if user_id is not None and effective_user_id is None:
             meta_dict['original_user_id'] = str(user_id)
-        if target_id is not None and effective_target_id is None:
-            meta_dict['original_target_id'] = str(target_id)
             
         activity = Activity(
             activity_type=activity_type,
@@ -92,10 +82,13 @@ class ActivityService:
         )
         
         self.db.add(activity)
-        await self.db.commit()
-        await self.db.refresh(activity)
-        
-        logger.info(f"Activity logged: {activity_type}:{action} on {target_type}:{target_name}")
+        try:
+            await self.db.commit()
+            await self.db.refresh(activity)
+            logger.info(f"Activity logged: {activity_type}:{action} on {target_type}:{target_name}")
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Failed to log activity: {str(e)}")
         return activity
     
     async def log_device_state_change(self,
@@ -287,6 +280,20 @@ class ActivityService:
         result = await self.db.execute(query)
         return result.scalars().all()
     
+    async def get_activities_count_by_time_range(self, start_time: datetime, end_time: datetime) -> int:
+        """
+        Count activities within a given time range.
+        """
+        query = select(func.count(Activity.id)).where(
+            and_(
+                Activity.timestamp >= start_time,
+                Activity.timestamp <= end_time
+            )
+        )
+        result = await self.db.execute(query)
+        count = result.scalar() or 0
+        return count
+    
     async def search_activities(self,
                               activity_type: Optional[str] = None,
                               action: Optional[str] = None,
@@ -331,11 +338,19 @@ class ActivityService:
         if user_id:
             conditions.append(Activity.user_id == user_id)
         
+        def _to_naive(dt: Optional[datetime]) -> Optional[datetime]:
+            """Ensure datetime is timezone-naive (UTC). Postgres column is TIMESTAMP WITHOUT TIME ZONE."""
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                return dt
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        
         if start_time:
-            conditions.append(Activity.timestamp >= start_time)
+            conditions.append(Activity.timestamp >= _to_naive(start_time))
         
         if end_time:
-            conditions.append(Activity.timestamp <= end_time)
+            conditions.append(Activity.timestamp <= _to_naive(end_time))
         
         if conditions:
             query = select(Activity).where(and_(*conditions))
@@ -344,4 +359,70 @@ class ActivityService:
         
         query = query.order_by(desc(Activity.timestamp)).offset(skip).limit(limit)
         result = await self.db.execute(query)
-        return result.scalars().all() 
+        return result.scalars().all()
+    
+    async def get_activities_count_by_type(self, start_time: datetime, end_time: datetime) -> Dict[str, int]:
+        """Count activities grouped by type within a time range"""
+        query = select(Activity.activity_type, func.count(Activity.id)).where(
+            and_(
+                Activity.timestamp >= start_time,
+                Activity.timestamp <= end_time
+            )
+        ).group_by(Activity.activity_type)
+        result = await self.db.execute(query)
+        return {row[0]: row[1] for row in result.all()}
+
+    async def get_activities_count_by_action(self, start_time: datetime, end_time: datetime) -> Dict[str, int]:
+        """Count activities grouped by action within a time range"""
+        query = select(Activity.action, func.count(Activity.id)).where(
+            and_(
+                Activity.timestamp >= start_time,
+                Activity.timestamp <= end_time
+            )
+        ).group_by(Activity.action)
+        result = await self.db.execute(query)
+        return {row[0]: row[1] for row in result.all()}
+
+    async def get_daily_activity_trend(self, start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
+        """Get daily activity counts between two dates"""
+        date_col = func.date(Activity.timestamp).label('date')
+        query = select(date_col, func.count(Activity.id)).where(
+            and_(
+                Activity.timestamp >= start_time,
+                Activity.timestamp <= end_time
+            )
+        ).group_by(date_col).order_by(date_col)
+        result = await self.db.execute(query)
+        trend_list = []
+        for raw_date, count in result.all():
+            # Ensure we have a string representation of the date. Some databases (e.g., SQLite)
+            # return the `date` function as a plain string, while others (e.g., PostgreSQL) return
+            # a `datetime.date` object. Convert both formats to an ISO date string.
+            if hasattr(raw_date, "isoformat"):
+                date_str = raw_date.isoformat()
+            else:
+                date_str = str(raw_date)
+            trend_list.append({
+                'date': date_str,
+                'count': count
+            })
+        return trend_list
+
+    async def get_most_active_devices(self, start_time: datetime, end_time: datetime, limit: int = 5) -> List[Dict[str, Any]]:
+        """List top devices by activity count in a time range"""
+        query = select(
+            Activity.target_id.label('id'),
+            Activity.target_name.label('name'),
+            func.count(Activity.id).label('count')
+        ).where(
+            and_(
+                Activity.timestamp >= start_time,
+                Activity.timestamp <= end_time,
+                Activity.target_type == 'device'
+            )
+        ).group_by(
+            Activity.target_id,
+            Activity.target_name
+        ).order_by(func.count(Activity.id).desc()).limit(limit)
+        result = await self.db.execute(query)
+        return [{'id': id_, 'name': name, 'count': count} for id_, name, count in result.all()]

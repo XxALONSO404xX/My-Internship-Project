@@ -102,6 +102,7 @@ export function AuthProvider({ children }) {
       const result = await authLogin(username, password, rememberMe);
 
       if (result.success) {
+        localStorage.removeItem('initialScanDone');
         setUser(result.user);
         setIsAuthenticated(true);
         console.log('AuthContext: Login successful');
@@ -363,8 +364,9 @@ export function AuthProvider({ children }) {
     try {
       console.log('AuthContext: Logging out');
       await authLogout();
-      
-      // Reset auth state
+      // Reset welcome flag for next login session
+      sessionStorage.removeItem('welcomeShown');
+      localStorage.removeItem('initialScanDone');
       setUser(null);
       setIsAuthenticated(false);
       clearError();

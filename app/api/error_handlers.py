@@ -34,7 +34,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     Log the error details and return a consistent error response with validation details
     """
     errors = exc.errors()
-    logger.warning(f"Validation error: {errors}")
+    # sanitize errors: convert non-serializable context values to strings
+    sanitized_errors = []
+    for err in errors:
+        err_copy = err.copy()
+        if 'ctx' in err_copy:
+            err_copy['ctx'] = {k: str(v) for k, v in err_copy['ctx'].items()}
+        sanitized_errors.append(err_copy)
+    logger.warning(f"Validation error: {sanitized_errors}")
     
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -42,7 +49,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "success": False,
             "error": "Validation error",
             "message": "Invalid request parameters",
-            "details": errors,
+            "details": sanitized_errors,
             "path": request.url.path
         }
     )

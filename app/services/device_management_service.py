@@ -935,8 +935,22 @@ class DeviceService:
         if not device:
             return {"success": False, "error": "Device not found"}
         
+        # Sanitize device_metadata early to avoid type errors later
+        if device.device_metadata and not isinstance(device.device_metadata, dict):
+            try:
+                import json
+                device.device_metadata = json.loads(device.device_metadata)
+            except Exception:
+                # Fallback to empty dict if parsing fails
+                device.device_metadata = {}
+                logger.warning(
+                    "device_metadata for %s was non-dict and could not be parsed; reset to empty dict", device_id
+                )
+        
         # Log device status for debugging
-        logger.info(f"Device control request: device_id={device_id}, is_online={device.is_online}, action={action}")
+        logger.info(
+            f"Device control request: device_id={device_id}, is_online={device.is_online}, action={action}, device_type={device.device_type}"
+        )
         
         # Special handling for power actions
         action_lower = action.lower()
@@ -976,7 +990,8 @@ class DeviceService:
                 result = await self._control_lock(device, action, parameters, metadata)
             elif device_type == "switch":
                 result = await self._control_switch(device, action, parameters, metadata)
-            elif device_type == "sensor":
+            elif device_type == "sensor" or ("sensor" in device_type):
+                # Handle specific sensor sub-types like contact_sensor, motion_sensor, etc.
                 result = await self._control_sensor(device, action, parameters, metadata)
             else:
                 # Generic device control
@@ -1092,18 +1107,23 @@ class DeviceService:
                            parameters: Dict[str, Any], 
                            metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Handle light control actions"""
-        # Get current device state
-        device_metadata = device.device_metadata or {}
-        current_state = device_metadata.get("state", {})
+        # Get current device metadata and state, ensure both are dicts
+        raw_metadata = device.device_metadata or {}
+        device_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        
+        raw_state = device_metadata.get("state", {})
+        current_state = raw_state if isinstance(raw_state, dict) else {}
+        
+        # Ensure nested dict fields have proper types
+        if not isinstance(current_state.get("color"), dict):
+            current_state["color"] = {"r": 255, "g": 255, "b": 255}
         
         # Initialize with defaults if not present
         if "power" not in current_state:
             current_state["power"] = False
         if "brightness" not in current_state:
             current_state["brightness"] = 100
-        if "color" not in current_state:
-            current_state["color"] = {"r": 255, "g": 255, "b": 255}
-            
+        
         # Process action
         if action == "turn_on":
             current_state["power"] = True
@@ -1251,6 +1271,7 @@ class DeviceService:
         await self.db.commit()
         
         return result
+    
     async def _control_camera(self, device: Device, action: str, 
                                 parameters: Dict[str, Any], 
                                 metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -1484,14 +1505,21 @@ class DeviceService:
                              parameters: Dict[str, Any], 
                              metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Handle switch control actions"""
-        # Get current device state
-        device_metadata = device.device_metadata or {}
-        current_state = device_metadata.get("state", {})
+        # Get current device metadata and state, ensure both are dicts
+        raw_metadata = device.device_metadata or {}
+        device_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        
+        raw_state = device_metadata.get("state", {})
+        current_state = raw_state if isinstance(raw_state, dict) else {}
+        
+        # Ensure nested outlets field is a dict
+        if not isinstance(current_state.get("outlets"), dict):
+            current_state["outlets"] = {}
         
         # Initialize with defaults if not present
         if "power" not in current_state:
             current_state["power"] = False
-        if "outlets" not in current_state:
+        if "outlets" not in current_state or not current_state["outlets"]:
             # Default to a single outlet switch
             current_state["outlets"] = {"main": False}
             
@@ -1542,6 +1570,7 @@ class DeviceService:
         # Update device metadata with new state
         device_metadata["state"] = current_state
         device.device_metadata = device_metadata
+        await self.db.commit()
         
         # Return success result
         return result
@@ -1549,19 +1578,24 @@ class DeviceService:
                             parameters: Dict[str, Any], 
                             metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Handle sensor control actions"""
-        # Get current device state
-        device_metadata = device.device_metadata or {}
-        current_state = device_metadata.get("state", {})
+        # Get current device metadata and state, ensure both are dicts
+        raw_metadata = device.device_metadata or {}
+        device_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        
+        raw_state = device_metadata.get("state", {})
+        current_state = raw_state if isinstance(raw_state, dict) else {}
+        
+        # Ensure nested dict fields are properly initialized/typed
+        if not isinstance(current_state.get("readings"), dict):
+            current_state["readings"] = {}
+        if not isinstance(current_state.get("alert_thresholds"), dict):
+            current_state["alert_thresholds"] = {}
         
         # Initialize with defaults if not present
         if "power" not in current_state:
             current_state["power"] = True  # Most sensors are always on
         if "battery" not in current_state:
             current_state["battery"] = 100  # Percentage
-        if "readings" not in current_state:
-            current_state["readings"] = {}  # Latest sensor readings
-        if "alert_thresholds" not in current_state:
-            current_state["alert_thresholds"] = {}  # Alert thresholds
         if "alerting_enabled" not in current_state:
             current_state["alerting_enabled"] = True
         if "sampling_rate" not in current_state:

@@ -150,7 +150,7 @@ class RuleService:
                 rule.priority = rule_data["priority"]
             
             # Update timestamp
-            rule.updated_at = datetime.utcnow()
+            rule.updated_at = datetime.now()
             
             # Save changes
             await self.db.commit()
@@ -186,22 +186,26 @@ class RuleService:
             rule = await self.db.get(Rule, rule_id)
             if not rule:
                 return {
-                    "success": False,
-                    "error": f"Rule {rule_id} not found"
+                    "status": "error",
+                    "message": f"Rule {rule_id} not found",
+                    "data": None,
+                    "errors": [{"field": "rule_id", "detail": "Not found"}]
                 }
             
             # Cancel any active execution
             execution_id = f"rule_{rule_id}"
             if execution_id in self.active_executions:
-                self.active_executions[execution_id]["cancelled"] = True
+                self.active_executions[execution_id]["is_cancelled"] = True
             
             # Delete from database
             await self.db.delete(rule)
             await self.db.commit()
             
             return {
-                "success": True,
-                "message": f"Rule {rule_id} deleted"
+                "status": "success",
+                "message": f"Rule {rule_id} deleted",
+                "data": None,
+                "errors": None
             }
         except Exception as e:
             logger.error(f"Error deleting rule {rule_id}: {str(e)}")
@@ -313,7 +317,7 @@ class RuleService:
             
             # Update rule
             rule.is_enabled = False
-            rule.updated_at = datetime.utcnow()
+            rule.updated_at = datetime.now()
             await self.db.commit()
             await self.db.refresh(rule)
             
@@ -347,7 +351,7 @@ class RuleService:
         
         try:
             # Get device
-            device = await self.device_service.get_device(device_id)
+            device = await self.device_service.get_device_by_id(device_id)
             if not device:
                 error_result = {
                     "status": "error",
@@ -366,7 +370,7 @@ class RuleService:
             # Track execution
             self.active_executions[execution_id] = {
                 "device_id": device_id,
-                "started_at": datetime.utcnow().isoformat(),
+                "started_at": datetime.now().isoformat(),
                 "status": "running",
                 "is_cancelled": False
             }
@@ -399,7 +403,7 @@ class RuleService:
                 if execution_id in self.active_executions and self.active_executions[execution_id].get("is_cancelled", False):
                     # Update execution status
                     self.active_executions[execution_id]["status"] = "cancelled"
-                    self.active_executions[execution_id]["completed_at"] = datetime.utcnow().isoformat()
+                    self.active_executions[execution_id]["completed_at"] = datetime.now().isoformat()
                     
                     cancel_result = {
                         "status": "success",
@@ -423,6 +427,45 @@ class RuleService:
                     
                     return cancel_result
                 
+                # Schedule enforcement for scheduled rules
+                if rule.rule_type == "schedule":
+                    sched = rule.schedule or ""
+                    if "T" in sched:
+                        # support datetime-local strings without seconds
+                        sched_str = sched
+                        if len(sched_str.split('T')[1].split(':')) == 2:
+                            sched_str = sched_str + ":00"
+                        try:
+                            sched_dt = datetime.fromisoformat(sched_str)
+                        except ValueError:
+                            rule_results.append({
+                                "rule_id": rule.id,
+                                "rule_name": rule.name,
+                                "applied": False,
+                                "reason": "Invalid schedule format"
+                            })
+                            rules_skipped += 1
+                            continue
+                        now = datetime.now()
+                        if now < sched_dt:
+                            rule_results.append({
+                                "rule_id": rule.id,
+                                "rule_name": rule.name,
+                                "applied": False,
+                                "reason": "Scheduled for future"
+                            })
+                            rules_skipped += 1
+                            continue
+                        if rule.last_triggered and rule.last_triggered >= sched_dt:
+                            rule_results.append({
+                                "rule_id": rule.id,
+                                "rule_name": rule.name,
+                                "applied": False,
+                                "reason": "Already executed"
+                            })
+                            rules_skipped += 1
+                            continue
+                
                 # Check if rule applies to this device
                 if await self._rule_applies_to_device(rule, device):
                     # Rule applies, execute actions
@@ -434,6 +477,15 @@ class RuleService:
                         "actions": action_result.get("actions", [])
                     })
                     rules_applied += 1
+                    
+                    # Update last_triggered for one-time schedule rules
+                    if rule.rule_type == "schedule" and rule.schedule and "T" in rule.schedule:
+                        lt_str = rule.schedule
+                        if len(lt_str.split('T')[1].split(':')) == 2:
+                            lt_str = lt_str + ":00"
+                        rule.last_triggered = datetime.fromisoformat(lt_str)
+                        self.db.add(rule)
+                        await self.db.commit()
                     
                     # Publish progress update every 5 rules applied
                     if rules_applied % 5 == 0:
@@ -459,7 +511,7 @@ class RuleService:
             
             # Update execution status
             self.active_executions[execution_id]["status"] = "completed"
-            self.active_executions[execution_id]["completed_at"] = datetime.utcnow().isoformat()
+            self.active_executions[execution_id]["completed_at"] = datetime.now().isoformat()
             self.active_executions[execution_id]["rules_applied"] = rules_applied
             self.active_executions[execution_id]["rules_skipped"] = rules_skipped
             
@@ -469,7 +521,6 @@ class RuleService:
                 "data": {
                     "execution_id": execution_id,
                     "device_id": device_id,
-                    "device_name": device.name,
                     "rules_applied_count": rules_applied,
                     "rules_skipped_count": rules_skipped,
                     "results": rule_results
@@ -491,7 +542,7 @@ class RuleService:
             if execution_id in self.active_executions:
                 self.active_executions[execution_id]["status"] = "failed"
                 self.active_executions[execution_id]["error"] = str(e)
-                self.active_executions[execution_id]["completed_at"] = datetime.utcnow().isoformat()
+                self.active_executions[execution_id]["completed_at"] = datetime.now().isoformat()
             
             logger.error(f"Error applying rules to device {device_id}: {str(e)}")
             error_result = {
@@ -523,7 +574,7 @@ class RuleService:
         try:
             # Track execution
             self.active_executions[execution_id] = {
-                "started_at": datetime.utcnow().isoformat(),
+                "started_at": datetime.now().isoformat(),
                 "status": "running",
                 "cancelled": False
             }
@@ -564,7 +615,7 @@ class RuleService:
                 
                 # Update execution status
                 self.active_executions[execution_id]["status"] = "completed"
-                self.active_executions[execution_id]["completed_at"] = datetime.utcnow().isoformat()
+                self.active_executions[execution_id]["completed_at"] = datetime.now().isoformat()
                 
                 # Publish completion event
                 await self._publish_rule_execution_status(
@@ -589,7 +640,7 @@ class RuleService:
                 
                 # Update execution status
                 self.active_executions[execution_id]["status"] = "completed"
-                self.active_executions[execution_id]["completed_at"] = datetime.utcnow().isoformat()
+                self.active_executions[execution_id]["completed_at"] = datetime.now().isoformat()
                 
                 # Publish completion event
                 await self._publish_rule_execution_status(
@@ -648,7 +699,7 @@ class RuleService:
                         
                         # Update execution status
                         self.active_executions[execution_id]["status"] = "cancelled"
-                        self.active_executions[execution_id]["completed_at"] = datetime.utcnow().isoformat()
+                        self.active_executions[execution_id]["completed_at"] = datetime.now().isoformat()
                         
                         return cancel_result
                     
@@ -679,7 +730,7 @@ class RuleService:
                 
                 # Update execution status
                 self.active_executions[execution_id]["status"] = "completed"
-                self.active_executions[execution_id]["completed_at"] = datetime.utcnow().isoformat()
+                self.active_executions[execution_id]["completed_at"] = datetime.now().isoformat()
                 self.active_executions[execution_id]["devices_processed"] = devices_processed
                 self.active_executions[execution_id]["rules_applied"] = len(results)
                 
@@ -724,7 +775,7 @@ class RuleService:
             if execution_id in self.active_executions:
                 self.active_executions[execution_id]["status"] = "failed"
                 self.active_executions[execution_id]["error"] = str(e)
-                self.active_executions[execution_id]["completed_at"] = datetime.utcnow().isoformat()
+                self.active_executions[execution_id]["completed_at"] = datetime.now().isoformat()
             
             error_result = {
                 "status": "error",
@@ -742,139 +793,12 @@ class RuleService:
             
             return error_result
             
-    async def disable_rule(self, rule_id: int) -> Dict[str, Any]:
-        # Disable a rule by ID
-        try:
-            rule = await self._get_rule_by_id(rule_id)
-            if not rule:
-                return {
-                    "status": "error",
-                    "message": f"Rule with ID {rule_id} not found",
-                    "data": None,
-                    "errors": [{"field": "rule_id", "detail": "Rule not found"}]
-                }
-                
-            if not rule.is_enabled:
-                return {
-                    "status": "success",
-                    "message": f"Rule {rule_id} is already disabled",
-                    "data": rule.to_dict(),
-                    "errors": None
-                }
-            
-            # Update rule
-            rule.is_enabled = False
-            rule.updated_at = datetime.utcnow()
-            await self.db.commit()
-            await self.db.refresh(rule)
-            
-            return {
-                "status": "success",
-                "message": f"Rule {rule_id} disabled successfully",
-                "data": rule.to_dict(),
-                "errors": None
-            }
-        except Exception as e:
-            logger.error(f"Error disabling rule {rule_id}: {str(e)}")
-            return {
-                "status": "error",
-                "message": "Failed to disable rule",
-                "data": None,
-                "errors": [{"field": "database", "detail": str(e)}]
-            }
-        
-    async def apply_rules_to_device(self, device_id: int) -> Dict[str, Any]:
-        # Apply all enabled rules to a specific device
-        #
-        # Args:
-        #    device_id: ID of the device to apply rules to
-        #
-        # Returns:
-        #    Standardized response with rule application results
-        try:
-            # Get device
-            device = await self.device_service.get_device(device_id)
-            if not device:
-                return {
-                    "status": "error",
-                    "message": f"Device {device_id} not found",
-                    "data": None,
-                    "errors": [{"field": "device_id", "detail": "Not found"}]
-                }
-            
-            # Get enabled rules
-            query = select(Rule).where(Rule.is_enabled == True).order_by(Rule.priority.desc())
-            result = await self.db.execute(query)
-            rules = result.scalars().all()
-            
-            # Apply rules
-            applied_rules = []
-            for rule in rules:
-                # Generate execution ID
-                execution_id = f"{self.execution_id_prefix}_{rule.id}_{uuid.uuid4().hex[:8]}"
-                
-                # Add to active executions
-                self.active_executions[execution_id] = {
-                    "rule_id": rule.id,
-                    "device_id": device_id,
-                    "started_at": datetime.utcnow().isoformat(),
-                    "status": "running",
-                    "cancelled": False
-                }
-            
-            # Apply rule
-            result = await self._apply_rule(rule, device, execution_id)
-            if result.get("action_taken", False):
-                applied_rules.append({
-                    "rule_id": rule.id,
-                    "name": rule.name,
-                    "actions": result.get("actions", [])
-                })
-            
-            # Update execution status
-            self.active_executions[execution_id]["status"] = "completed"
-            self.active_executions[execution_id]["completed_at"] = datetime.utcnow().isoformat()
-            
-            if applied_rules:
-                results.append({
-                    "device_id": device.id,
-                    "device_name": device.name,
-                    "rules_applied": len(applied_rules),
-                    "rule_ids": applied_rules,
-                    "actions": device_actions
-                })
-                total_actions += len(device_actions)
-                
-            # Return results
-            return {
-                "status": "success",
-                "message": f"Applied rules to device {device_id}",
-                "data": {
-                    "device_id": device_id,
-                    "rules_applied": len(applied_rules),
-                    "results": applied_rules
-                },
-                "errors": None
-            }
-            
-        except Exception as e:
-            logger.error(f"Error applying rules to device {device_id}: {str(e)}")
-            return {
-                "status": "error",
-                "message": "Failed to apply rules to device",
-                "data": None,
-                "errors": [{"field": "execution", "detail": str(e)}]
-            }
-            
     async def get_active_executions(self) -> Dict[str, Any]:
-        # Get all active rule executions with their status
         try:
-            # Clean up old executions (older than 10 minutes)
-            cutoff_time = datetime.utcnow() - timedelta(minutes=10)
+            cutoff_time = datetime.now() - timedelta(minutes=10)
             exec_ids_to_remove = []
             
             for exec_id, exec_data in self.active_executions.items():
-                # Check if the started_at field exists and is in the correct format
                 started_at = exec_data.get("started_at")
                 if started_at:
                     try:
@@ -882,13 +806,11 @@ class RuleService:
                         if started_time < cutoff_time:
                             exec_ids_to_remove.append(exec_id)
                     except (ValueError, TypeError):
-                        # If we can't parse the time, keep the execution record
-                        logger.warning(f"Invalid started_at format in execution {exec_id}")
+                        exec_ids_to_remove.append(exec_id)
             
             for exec_id in exec_ids_to_remove:
-                del self.active_executions[exec_id]
+                self.active_executions.pop(exec_id, None)
             
-            # Count executions by status
             status_counts = {}
             for exec_data in self.active_executions.values():
                 status = exec_data.get("status", "unknown")
@@ -898,17 +820,17 @@ class RuleService:
                 "status": "success",
                 "message": f"Found {len(self.active_executions)} active executions",
                 "data": {
-                    "active_executions": self.active_executions,
-                    "execution_count": len(self.active_executions),
+                    "executions": self.active_executions,
+                    "count": len(self.active_executions),
                     "status_summary": status_counts
                 },
                 "errors": None
             }
         except Exception as e:
-            logger.error(f"Error retrieving active executions: {str(e)}")
+            logger.error(f"Error getting active executions: {str(e)}")
             return {
                 "status": "error",
-                "message": "Failed to retrieve active executions",
+                "message": "Failed to get active executions",
                 "data": None,
                 "errors": [{"field": "execution", "detail": str(e)}]
             }
@@ -932,7 +854,7 @@ class RuleService:
                 "event_type": "rule_execution",
                 "execution_id": execution_id,
                 "status": status,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now().isoformat()
             }
             
             # Add result data if available
@@ -948,8 +870,20 @@ class RuleService:
             if error:
                 event_data["error"] = error
             
-            # Publish event to all connected clients
-            await publish_event(event_data)
+            # Determine if notification should be sent
+            should_notify = True
+            if not error:
+                data_stats = event_data.get("data", {})
+                devices_processed = data_stats.get("devices_processed", 0)
+                rules_applied_count = data_stats.get("rules_applied_count", 0)
+                if devices_processed == 0 and rules_applied_count == 0:
+                    should_notify = False
+            
+            if should_notify:
+                # Publish event to all connected clients
+                await publish_event(event_data)
+            else:
+                logger.debug("Rule execution produced no changes – notification suppressed")
             
         except Exception as e:
             # Log but don't interrupt rule processing
@@ -958,8 +892,14 @@ class RuleService:
     async def _rule_applies_to_device(self, rule: Rule, device: Any) -> bool:
         # Check if a rule applies to a device based on conditions
         # Check if this rule targets specific devices
-        if rule.target_device_ids and device.id not in rule.target_device_ids:
-            return False  # This rule doesn't apply to this device
+        if rule.target_device_ids:
+            # Match by numeric ID or string hash_id
+            if not any(
+                (isinstance(tid, int) and tid == device.id)
+                or (isinstance(tid, str) and (tid == device.hash_id or tid == str(device.id)))
+                for tid in rule.target_device_ids
+            ):
+                return False  # This rule doesn't apply to this device
         
         conditions = rule.conditions
         
@@ -1070,7 +1010,8 @@ class RuleService:
                 title = parameters.get("title", f"Alert from rule: {rule.name}")
                 content = parameters.get("content", f"Rule {rule.name} was triggered by device {device.name}")
                 recipients = parameters.get("recipients", [])
-                channels = parameters.get("channels", ["in_app"])
+                # Include email and websocket by default in addition to in_app
+                channels = parameters.get("channels", ["in_app", "email", "websocket"])
                 
                 if recipients and channels:
                     notification = await self.notification_service.create_notification(
@@ -1090,16 +1031,26 @@ class RuleService:
                             "rule_name": rule.name,
                             "device_id": device.id,
                             "device_name": device.name,
-                            "triggered_at": datetime.utcnow().isoformat()
+                            "triggered_at": datetime.now().isoformat()
                         }
                     )
                     
+                    # Dispatch the notification via each channel
+                    delivery_results = {}
+                    for ch in channels:
+                        try:
+                            send_res = await self.notification_service.send_notification(notification.id, ch)
+                            delivery_results[ch] = send_res
+                        except Exception as e:
+                            delivery_results[ch] = {"success": False, "error": str(e)}
+                      
                     results.append({
                         "rule_id": rule.id,
                         "action": "notification",
                         "notification_id": notification.id if notification else None,
                         "channels": channels,
-                        "recipients": recipients
+                        "recipients": recipients,
+                        "delivery_results": delivery_results
                     })
         
         return {
@@ -1292,7 +1243,7 @@ class RuleService:
                     self.active_executions[execution_id]["cancelled"] = True
                     
                 self.active_executions[execution_id]["status"] = "cancelled"
-                self.active_executions[execution_id]["cancelled_at"] = datetime.utcnow().isoformat()
+                self.active_executions[execution_id]["cancelled_at"] = datetime.now().isoformat()
                 
                 result = {
                     "status": "success",
@@ -1324,7 +1275,7 @@ class RuleService:
                             self.active_executions[exec_id]["cancelled"] = True
                             
                         self.active_executions[exec_id]["status"] = "cancelled"
-                        self.active_executions[exec_id]["cancelled_at"] = datetime.utcnow().isoformat()
+                        self.active_executions[exec_id]["cancelled_at"] = datetime.now().isoformat()
                         cancelled_executions.append(exec_id)
                         cancel_count += 1
                         
@@ -1396,7 +1347,7 @@ class RuleService:
     
     async def get_active_executions(self) -> Dict[str, Any]:
         try:
-            cutoff_time = datetime.utcnow() - timedelta(minutes=10)
+            cutoff_time = datetime.now() - timedelta(minutes=10)
             exec_ids_to_remove = []
             
             for exec_id, exec_data in self.active_executions.items():

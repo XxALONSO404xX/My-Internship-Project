@@ -39,7 +39,8 @@ class GroupService:
         """Get a group by ID"""
         query = select(Group).where(Group.id == group_id).options(joinedload(Group.devices))
         result = await self.db.execute(query)
-        return result.scalar_one_or_none()
+        # Deduplicate joined eager-loaded rows before retrieving single result
+        return result.unique().scalar_one_or_none()
     
     async def get_groups_by_type(self, group_type: str) -> List[Group]:
         """Get groups by type"""
@@ -166,7 +167,7 @@ class GroupService:
         """Get all groups for a device"""
         query = select(Device).where(Device.hash_id == device_hash_id).options(joinedload(Device.groups))
         result = await self.db.execute(query)
-        device = result.scalar_one_or_none()
+        device = result.unique().scalar_one_or_none()
         
         if not device:
             return []
@@ -351,7 +352,8 @@ class GroupVulnerabilityService:
                 "group_id": stats["group_id"],
                 "group_name": stats["group_name"],
                 "risk_score": stats.get("risk_score", 0),
-                "vulnerability_count": sum(counts.values())
+                "vulnerability_count": sum(counts.values()),
+                "vulnerability_counts": counts
             })
         
         # Sort by risk score (descending)

@@ -42,6 +42,7 @@ api_router.include_router(security_router, prefix="/security", tags=["security",
 
 # Firmware Management - Consolidated endpoints
 api_router.include_router(firmware_router, prefix="/firmware", tags=["firmware"])
+api_router.include_router(rules_router, prefix="/rules", tags=["rules"])
 
 # Bulk Operations - Removed due to syntax errors
 # api_router.include_router(bulk_router, prefix="/bulk", tags=["bulk-operations"])
@@ -72,17 +73,3 @@ api_router.include_router(notifications_router, prefix="/notifications", tags=["
 
 # Clients management
 api_router.include_router(clients_router, prefix="/clients", tags=["clients"])
-
-# === TESTING ENDPOINTS ===
-# Clearly separated from production endpoints
-
-# Remediation router has been consolidated into security_router
-# api_router.include_router(remediation_router, prefix="/test", tags=["testing"])
-
-# === DEPRECATED ENDPOINTS ===
-# These will be removed in future versions but maintained for backward compatibility
-# Use the new consolidated endpoints instead
-
-# Note: Old security, scans, security-info, and group-security endpoints 
-# have been consolidated into the primary resource endpoints or the vulnerabilities endpoint
-# Firmware has been simplified and aligned with the job-based approach

@@ -21,9 +21,7 @@ from app.core.logging import logger
 
 router = APIRouter()
 
-#
-# ===== VULNERABILITY SCANNING ENDPOINTS =====
-#
+
 
 @router.post("/vulnerability/{device_id}/scan", response_model=Dict[str, Any])
 async def start_vulnerability_scan(
@@ -126,22 +124,28 @@ async def remediate_vulnerability(
         metadata={"vulnerability_id": vulnerability_id}
     )
     
-    # Call the vulnerability manager to remediate
-    success = vulnerability_manager.remediate_vulnerability(device_id, vulnerability_id)
+    # Perform remediation via vulnerability manager
+    result = vulnerability_manager.remediate_vulnerability(device_id, vulnerability_id)
     
-    if not success:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Vulnerability {vulnerability_id} not found on device {device_id} or remediation failed"
-        )
+    # If remediation failed, raise HTTP error with reason
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message", "Remediation failed"))
     
-    return {
-        "status": "success",
-        "message": f"Vulnerability {vulnerability_id} has been remediated on device {device_id}",
-        "device_id": device_id,
-        "vulnerability_id": vulnerability_id,
-        "remaining_vulnerabilities": len(vulnerability_manager.get_device_vulnerabilities(device_id))
-    }
+    # Log successful remediation / partial etc.
+    await activity_service.log_device_state_change(
+        device_id=device_id,
+        action="vulnerability_remediation_performed",
+        user_id=current_client.id,
+        metadata={
+            "vulnerability_id": vulnerability_id,
+            "remediation_status": result.get("status"),
+            "outcome": result.get("outcome")
+        }
+    )
+    
+    # Include remaining vulnerabilities count
+    result["remaining_vulnerabilities"] = len(vulnerability_manager.get_device_vulnerabilities(device_id))
+    return result
 
 @router.post("/remediation/bulk", response_model=Dict[str, Any])
 async def bulk_remediate_vulnerabilities(
@@ -159,7 +163,9 @@ async def bulk_remediate_vulnerabilities(
     activity_service = ActivityService(db)
     total_vulns = sum(len(vuln_ids) for vuln_ids in remediation_data.values())
     await activity_service.log_activity(
+        activity_type="user_action",
         action="bulk_vulnerability_remediation",
+        description=f"Bulk remediation of {total_vulns} vulnerabilities across {len(remediation_data)} devices",
         user_id=current_client.id,
         metadata={
             "devices_count": len(remediation_data),

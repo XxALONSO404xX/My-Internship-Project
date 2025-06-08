@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import hashlib
+import time
 from datetime import datetime
 from typing import Dict, Any, Optional
 from fastapi import WebSocket, WebSocketDisconnect
@@ -13,6 +15,12 @@ class WebSocketManager:
     def __init__(self):
         # Store active connections with metadata
         self.active_connections: Dict[str, Dict[str, Any]] = {}
+        # Recent message signatures for deduplication
+        self._recent_signatures: Dict[str, float] = {}
+        # Deduplication window in seconds
+        self._dedup_window: int = 2
+        # Lock to protect signature map in concurrent broadcasts
+        self._dedup_lock = asyncio.Lock()
         # Set up periodic cleanup task
         self._setup_cleanup_task()
     
@@ -88,7 +96,7 @@ class WebSocketManager:
             logger.info(f"Client {client_id} disconnected from notification stream")
     
     async def broadcast(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a notification to all connected clients with proper error handling"""
+        """Send a notification to all connected clients with proper error handling (with dedup)."""
         results = {
             "success": False,
             "total": len(self.active_connections),
@@ -96,6 +104,22 @@ class WebSocketManager:
             "failed": 0,
             "errors": []
         }
+
+        # Deduplication check (concurrency-safe)
+        signature = self._generate_signature(message)
+        now = time.time()
+        async with self._dedup_lock:
+            last_sent_time = self._recent_signatures.get(signature)
+            if last_sent_time and (now - last_sent_time) < self._dedup_window:
+                logger.debug("Duplicate broadcast suppressed within dedup window")
+                results["skipped"] = True
+                return results
+            # Record this message signature
+            self._recent_signatures[signature] = now
+            # Clean up old signatures
+            expired = [sig for sig, ts in self._recent_signatures.items() if (now - ts) >= self._dedup_window]
+            for sig in expired:
+                self._recent_signatures.pop(sig, None)
         
         # Add timestamp to the message
         if "timestamp" not in message:
@@ -120,6 +144,22 @@ class WebSocketManager:
         
         results["success"] = results["delivered"] > 0
         return results
+    
+    async def _generate_signature(self, message: Dict[str, Any]) -> str:
+        """Generate a stable signature for a message excluding volatile timestamp fields"""
+        def _strip_ts(obj: Any):
+            if isinstance(obj, dict):
+                return {k: _strip_ts(v) for k, v in obj.items() if k not in {"timestamp", "connected_at", "last_activity"}}
+            if isinstance(obj, list):
+                return [_strip_ts(v) for v in obj]
+            return obj
+        sanitized = _strip_ts(message)
+        try:
+            raw = json.dumps(sanitized, sort_keys=True, default=str)
+        except Exception:
+            # Fallback – non-serialisable objects
+            raw = str(sanitized)
+        return hashlib.md5(raw.encode()).hexdigest()
     
     async def send_to_client(self, client_id: str, message: Dict[str, Any]) -> bool:
         """Send a notification to a specific client with proper error handling"""
@@ -157,8 +197,10 @@ websocket_manager = WebSocketManager()
 
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """Simple WebSocket endpoint for notification delivery"""
-    # Add connection timeout for inactive clients
-    websocket.client.timeout = 60.0  # 60 seconds timeout
+    # Note: FastAPI's WebSocket client attribute is just the remote address;
+    # it does not support a timeout field. Attempting to set it breaks the
+    # handshake with "'Address' object has no attribute 'timeout'".
+    # Any inactivity timeout should be implemented via ping/pong (see below).
     
     # Track connection in manager and send confirmation message
     await websocket_manager.connect(websocket, client_id)
@@ -224,31 +266,25 @@ async def publish_event(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Send a notification to all connected WebSocket clients
     
-    Args:
-        data: Notification data to send
-        
-    Returns:
-        Dict with delivery results
-        
-    Raises:
-        Exception: If there's a critical error that should interrupt notification flow
+    The payload sent over the wire follows this shape so that the
+    frontend can easily pattern-match it:
+    
+        {
+            "type": "notification",
+            "data": { ... original notification dict ... }
+        }
     """
-    
-    # Add timestamp if not provided
-    if "timestamp" not in data:
-        data["timestamp"] = datetime.utcnow().isoformat()
-        
-    # Ensure event_type is set for frontend routing
-    if "event_type" not in data:
-        data["event_type"] = "notification"
-    message = {
+    payload: Dict[str, Any] = {
         "type": "notification",
-        "data": data
+        "data": data.copy(),
     }
-    
+    # Enrich the inner data with mandatory fields
+    if "timestamp" not in payload["data"]:
+        payload["data"]["timestamp"] = datetime.utcnow().isoformat()
+        
     try:
         # Send to all connected clients
-        results = await websocket_manager.broadcast(message)
+        results = await websocket_manager.broadcast(payload)
         
         # Log results but don't stop notification delivery if WebSocket fails
         if not results["success"]:

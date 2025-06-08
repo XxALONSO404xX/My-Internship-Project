@@ -103,11 +103,10 @@ async def get_device_compatible_firmware(
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     
-    # Get firmware for the device type
-    firmware_service = FirmwareService(db)
-    query = f"SELECT * FROM firmware WHERE device_type = '{device.device_type}'"
-    result = await db.execute(query)
-    firmware_list = result.fetchall()
+    # Get firmware for the device type via ORM
+    stmt = select(Firmware).where(Firmware.device_type == device.device_type)
+    result = await db.execute(stmt)
+    firmware_list = result.scalars().all()
     
     return [
         {

@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
+from config import settings
 from app.services.messaging_service import NotificationService
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,14 @@ logger = logging.getLogger(__name__)
 class NotificationHelper:
     """Helper class for creating notifications from different platform features"""
     
+    def __init__(self, db):
+        """Initialize helper with a DB session so instance methods can use it.
+
+        Args:
+            db: Async SQLAlchemy session used for writing notifications.
+        """
+        self.db = db
+
     @staticmethod
     async def trigger_notification(
         db,
@@ -26,7 +35,8 @@ class NotificationHelper:
         target_name: Optional[str] = None,
         priority: int = 3,
         channels: List[str] = None,
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        recipients: List[str] = None,
     ):
         """
         Standardized method to trigger notifications from any system component
@@ -42,17 +52,42 @@ class NotificationHelper:
             target_id: ID of the target
             target_name: Name of the target
             priority: Priority level (1-5, where 5 is highest)
-            channels: Delivery channels (in_app, email, sms, etc.)
+            channels: Delivery channels (in_app, websocket, email, sms, etc.)
             metadata: Additional context data
+            recipients: List of email recipients
         """
+        # Default channels include both in_app (for persistence) and websocket (for real-time)
         if channels is None:
-            channels = ["in_app"]
+            channels = ["in_app", "websocket"]
+        
+        # Ensure email & SMS channels are always included
+        if "email" not in channels:
+            channels.append("email")
+        if "sms" not in channels:
+            channels.append("sms")
             
         if metadata is None:
             metadata = {}
-            
+        
+        # Initialise recipients list
+        if recipients is None:
+            recipients = []
+
+        # Append default recipients from env if missing
+        default_email = getattr(settings, "DEFAULT_NOTIFICATION_EMAIL", None)
+        if default_email and default_email not in recipients:
+            recipients.append(default_email)
+
+        default_phone = getattr(settings, "DEFAULT_NOTIFICATION_PHONE", None)
+        if default_phone and default_phone not in recipients:
+            recipients.append(default_phone)
+        
         # Add timestamp to metadata
         metadata["triggered_at"] = datetime.utcnow().isoformat()
+        
+        # Always include websocket for real-time delivery
+        if "websocket" not in channels:
+            channels.append("websocket")
         
         try:
             notification_service = NotificationService(db)
@@ -66,8 +101,9 @@ class NotificationHelper:
                 target_id=target_id,
                 target_name=target_name,
                 priority=priority,
+                recipients=recipients,
                 channels=channels,
-                notification_metadata=metadata
+                metadata=metadata
             )
             logger.info(f"Notification triggered: {title} (priority: {priority}, type: {notification_type})")
         except Exception as e:
@@ -87,7 +123,7 @@ class NotificationHelper:
         }
         
         # Determine channels based on severity
-        channels = ["in_app"]
+        channels = ["in_app", "websocket"]
         if severity in ["critical", "high"]:
             channels.append("email")
         
@@ -231,4 +267,70 @@ class NotificationHelper:
                 "impact_percentage": round(impact_percentage, 1),
                 "affected_device_ids": [getattr(d, "id", i) for i, d in enumerate(affected_devices[:10])]  # Limit to first 10
             }
+        )
+
+    # Convenience wrapper for vulnerability scan summary notifications
+    async def create_vulnerability_notification(
+        self,
+        device_id: str,
+        vulnerability_count: int,
+        risk_score: float,
+        critical_count: int = 0,
+        vulnerabilities: Optional[List[Dict[str, Any]]] = None,
+    ):
+        """Send aggregated notification after a vulnerability scan.
+
+        Args:
+            device_id: Device hash_id or identifier.
+            vulnerability_count: Total vulnerabilities discovered.
+            risk_score: Calculated risk score.
+            critical_count: Number of critical-severity vulnerabilities.
+            vulnerabilities: List of vulnerability details.
+        """
+        # Default empty list for vulnerabilities details
+        if vulnerabilities is None:
+            vulnerabilities = []
+        # Determine priority and channels
+        priority = 4 if critical_count > 0 else 3
+        channels: List[str] = ["in_app", "websocket"]
+        if critical_count > 0:
+            channels.append("email")
+
+        notification_type = "warning" if vulnerability_count > 0 else "success"
+
+        # Build detailed content
+        content_lines = [
+            f"Vulnerability scan completed for device {device_id}.",
+            f"Total vulnerabilities: {vulnerability_count} (Critical: {critical_count}).",
+            f"Risk score: {risk_score:.1f}",
+        ]
+        if vulnerabilities:
+            content_lines.append("Details:")
+            for v in vulnerabilities:
+                title = v.get('title', v.get('id', 'Unknown'))
+                severity = v.get('severity', 'unknown').capitalize()
+                cvss = v.get('cvss_score', '')
+                content_lines.append(f"- {title} (Severity: {severity}, CVSS: {cvss})")
+        else:
+            content_lines.append("No vulnerabilities detected.")
+        content = "\n".join(content_lines)
+
+        await NotificationHelper.trigger_notification(
+            db=self.db,
+            title=f"Vulnerability Scan Completed for {device_id}",
+            content=content,
+            notification_type=notification_type,
+            source="vulnerability_scanner",
+            target_type="device",
+            target_id=None,
+            target_name=None,
+            priority=priority,
+            channels=channels,
+            metadata={
+                "device_id": device_id,
+                "vulnerability_count": vulnerability_count,
+                "risk_score": risk_score,
+                "critical_count": critical_count,
+                "vulnerabilities": vulnerabilities,
+            },
         )

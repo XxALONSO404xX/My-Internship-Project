@@ -75,6 +75,11 @@ class EmailService:
                 logger.info("Using Gmail SMTP with STARTTLS")
             elif self.smtp_server == 'smtp.gmail.com' and self.smtp_port == 465:
                 logger.info("Using Gmail SMTP with SSL")
+            else:
+                # Fall back to standard TLS for other ports
+                logger.warning(f"Unusual port {self.smtp_port} for Gmail - attempting TLS connection")
+                context = ssl.create_default_context()
+                server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context)
         else:
             # For non-Gmail, use setting from config
             self.use_tls = settings.SMTP_USE_TLS
@@ -324,8 +329,8 @@ class EmailService:
         subject = "Verify Your IoT Platform Account"
         
         # Create HTML body
-        # Using hash-based routing format that the frontend expects (#verify/token)
-        verification_url = f"{settings.FRONTEND_URL}/#verify/{token}"
+        verification_url = f"{settings.FRONTEND_URL.rstrip('/')}/verify-email/{token}"
+        logger.info(f"MessagingService: sending verification email to {email} with URL: {verification_url}")
         body_html = f"""
         <html>
         <body>
@@ -383,8 +388,8 @@ class EmailService:
         subject = "Reset Your IoT Platform Password"
         
         # Create HTML body
-        # Using hash-based routing format that the frontend expects (#reset-password/token)
-        reset_url = f"{settings.FRONTEND_URL}/#reset-password/{token}"
+        reset_url = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password/{token}"
+        logger.info(f"MessagingService: sending password reset email to {email} with URL: {reset_url}")
         body_html = f"""
         <html>
         <body>
@@ -772,22 +777,24 @@ class NotificationService:
         
         # Record activity
         await self.activity_service.log_activity(
-            activity_type="notification_created",
+            activity_type="system_event",
+            action="notification_created",
             description=f"Notification created: {title}",
-            source=source,
-            source_id=source_id,
-            severity=priority,
+            target_type=target_type,
+            target_id=target_id,
+            target_name=target_name,
             metadata={
                 "notification_id": notification.id,
                 "notification_type": notification_type,
-                "target_type": target_type,
-                "target_id": target_id
+                "priority": priority,
+                "source": source,
+                "source_id": source_id
             }
         )
         
         # Dispatch to appropriate channels if specified
-        if recipients and channels:
-            await self._dispatch_notification(notification, recipients, channels)
+        if channels:
+            await self._dispatch_notification(notification, recipients or [], channels)
         
         return notification
     
@@ -891,8 +898,8 @@ class NotificationService:
         # Websocket notification
         if "websocket" in channels:
             try:
-                event_name = f"notification:{notification.notification_type}"
-                await publish_event(event_name, notification_data)
+                # Publish the notification using a single dictionary argument as required
+                await publish_event(notification_data)
                 results["websocket"] = {"success": True}
             except Exception as e:
                 logger.error(f"Error publishing websocket notification: {str(e)}")
@@ -954,111 +961,18 @@ class NotificationService:
             results["sms"] = sms_results
             
         return results
+    
+    # ------------------------------------------------------------------
+    # Internal validation helpers (proxy to EmailService / SMSService)
+    # ------------------------------------------------------------------
     
     def _validate_email(self, email: str) -> bool:
-        """Validate email address format"""
-        # Basic email validation
-        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        return re.match(pattern, email) is not None
+        """Validate email address using the underlying EmailService helper."""
+        return self.email_service._validate_email(email)
     
     def _validate_phone_number(self, phone_number: str) -> bool:
-        """Validate phone number format"""
-        # Basic phone validation (E.164 format)
-        pattern = r'^\+[1-9]\d{1,14}$'
-        return re.match(pattern, phone_number) is not None
-
-
-    async def _dispatch_notification(self, notification: Notification, recipients: List[str], channels: List[str]) -> Dict[str, Any]:
-        """
-        Dispatch a notification to specified channels and recipients
-        
-        Args:
-            notification: The notification to dispatch
-            recipients: List of recipient IDs or addresses
-            channels: List of delivery channels (email, sms, websocket, in_app)
-            
-        Returns:
-            Results dictionary with status for each channel
-        """
-        results = {}
-        
-        # Prepare notification data for channels
-        notification_data = notification.to_dict()
-        
-        # Add metadata if available
-        if notification.notification_metadata:
-            try:
-                metadata = json.loads(notification.notification_metadata)
-                notification_data["metadata"] = metadata
-            except:
-                pass
-        
-        # Websocket notification
-        if "websocket" in channels:
-            try:
-                event_name = f"notification:{notification.notification_type}"
-                await publish_event(event_name, notification_data)
-                results["websocket"] = {"success": True}
-            except Exception as e:
-                logger.error(f"Error publishing websocket notification: {str(e)}")
-                results["websocket"] = {"success": False, "error": str(e)}
-        
-        # Email notification
-        if "email" in channels and recipients:
-            email_results = []
-            for recipient in recipients:
-                if self._validate_email(recipient):
-                    # Create HTML email body
-                    html_body = f"""
-                    <html>
-                    <body>
-                        <h2>{notification.title}</h2>
-                        <p>{notification.content}</p>
-                        <p>Priority: {notification.priority}</p>
-                        <p>Time: {notification.created_at.isoformat() if notification.created_at else datetime.utcnow().isoformat()}</p>
-                    </body>
-                    </html>
-                    """
-                    
-                    # Send email
-                    try:
-                        email_result = await self.email_service.send_email(
-                            to_email=recipient,
-                            subject=f"[IoT Platform] {notification.title}",
-                            body_html=html_body,
-                            body_text=notification.content
-                        )
-                        email_results.append({"recipient": recipient, "result": email_result})
-                    except Exception as e:
-                        logger.error(f"Error sending email notification to {recipient}: {str(e)}")
-                        email_results.append({"recipient": recipient, "error": str(e)})
-                        
-            results["email"] = email_results
-            
-        # SMS notification
-        if "sms" in channels and recipients:
-            sms_results = []
-            for recipient in recipients:
-                if self._validate_phone_number(recipient):
-                    # Create SMS message
-                    sms_content = f"{notification.title}: {notification.content}"
-                    if len(sms_content) > 160:
-                        sms_content = sms_content[:157] + "..."
-                    
-                    # Send SMS
-                    try:
-                        sms_result = await self.sms_service.send_sms(
-                            to_number=recipient,
-                            message=sms_content
-                        )
-                        sms_results.append({"recipient": recipient, "result": sms_result})
-                    except Exception as e:
-                        logger.error(f"Error sending SMS notification to {recipient}: {str(e)}")
-                        sms_results.append({"recipient": recipient, "error": str(e)})
-                        
-            results["sms"] = sms_results
-            
-        return results
+        """Validate phone number using the underlying SMSService helper."""
+        return self.sms_service._validate_phone_number(phone_number)
     
     async def send_notification(self, notification_id: int, channel: str) -> Dict[str, Any]:
         """

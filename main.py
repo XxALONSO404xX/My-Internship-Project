@@ -24,6 +24,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Configure specific loggers
+logging.getLogger('app.services.messaging_service').setLevel(logging.WARNING)
+
 # Store application start time
 START_TIME = datetime.utcnow()
 

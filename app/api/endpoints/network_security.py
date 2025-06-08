@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from pydantic import BaseModel
 
 from app.models.database import get_db
@@ -64,7 +65,9 @@ async def get_network_traffic_stats(
     Returns packet counts, protocol distribution, and bandwidth usage
     """
     # Get all devices to generate realistic device IDs
-    devices_query = await db.execute("SELECT hash_id, name, device_type FROM devices LIMIT 50")
+    devices_query = await db.execute(
+        text("SELECT hash_id, name, device_type FROM devices LIMIT 50")
+    )
     devices = devices_query.fetchall()
     
     # If no devices, generate random data
@@ -79,16 +82,20 @@ async def get_network_traffic_stats(
     incoming_packets = int(total_packets * random.uniform(0.4, 0.6))
     outgoing_packets = total_packets - incoming_packets
     
-    # Protocol distribution
+    # Protocol distribution based on device capabilities in DB
+    http_count = (await db.execute(text("SELECT COUNT(*) FROM devices WHERE supports_http = true"))).scalar() or 0
+    mqtt_count = (await db.execute(text("SELECT COUNT(*) FROM devices WHERE supports_mqtt = true"))).scalar() or 0
+    coap_count = (await db.execute(text("SELECT COUNT(*) FROM devices WHERE supports_coap = true"))).scalar() or 0
+    ws_count = (await db.execute(text("SELECT COUNT(*) FROM devices WHERE supports_websocket = true"))).scalar() or 0
+    total_supported = http_count + mqtt_count + coap_count + ws_count
     protocol_distribution = {}
-    remaining = 100
-    for protocol in PROTOCOLS[:-1]:
-        if remaining <= 0:
-            break
-        percentage = random.randint(5, min(50, remaining))
-        protocol_distribution[protocol] = percentage
-        remaining -= percentage
-    protocol_distribution[PROTOCOLS[-1]] = remaining
+    if total_supported > 0:
+        protocol_distribution['HTTP'] = round(http_count / total_supported * 100, 2)
+        protocol_distribution['MQTT'] = round(mqtt_count / total_supported * 100, 2)
+        protocol_distribution['CoAP'] = round(coap_count / total_supported * 100, 2)
+        protocol_distribution['WebSocket'] = round(ws_count / total_supported * 100, 2)
+    else:
+        protocol_distribution = {'HTTP': 0, 'MQTT': 0, 'CoAP': 0, 'WebSocket': 0}
     
     # Generate time-series data
     time_points = 24  # 24 data points
@@ -133,8 +140,16 @@ async def get_network_traffic_stats(
     top_talkers = []
     random.shuffle(devices)
     for i, device in enumerate(devices[:5]):
-        device_id = device[0] if isinstance(device, tuple) else device["hash_id"]
-        device_name = device[1] if isinstance(device, tuple) else device["name"]
+        # Result rows from raw SQL are returned as tuples; simulated entries are dicts
+        if isinstance(device, (list, tuple)):
+            device_id, device_name = device[0], device[1]
+        elif isinstance(device, dict):
+            device_id, device_name = device.get("hash_id"), device.get("name")
+        else:
+            # Fallback – attempt attribute access
+            device_id = getattr(device, "hash_id", None)
+            device_name = getattr(device, "name", str(device))
+        
         top_talkers.append({
             "device_id": device_id,
             "device_name": device_name,
@@ -169,7 +184,9 @@ async def get_security_events(
     Returns detected anomalies, potential attacks, and security alerts
     """
     # Get some real device IDs if available
-    devices_query = await db.execute("SELECT hash_id, name, device_type FROM devices LIMIT 50")
+    devices_query = await db.execute(
+        text("SELECT hash_id, name, device_type FROM devices LIMIT 50")
+    )
     devices = devices_query.fetchall()
     
     if not devices:
@@ -299,7 +316,9 @@ async def get_network_topology(
     Returns nodes (devices) and edges (connections) for visualization
     """
     # Get devices from database
-    devices_query = await db.execute("SELECT hash_id, name, device_type FROM devices")
+    devices_query = await db.execute(
+        text("SELECT hash_id, name, device_type FROM devices")
+    )
     devices = devices_query.fetchall()
     
     if not devices:
@@ -312,9 +331,16 @@ async def get_network_topology(
     # Create nodes
     nodes = []
     for device in devices:
-        device_id = device[0] if isinstance(device, tuple) else device["hash_id"]
-        device_name = device[1] if isinstance(device, tuple) else device["name"]
-        device_type = device[2] if isinstance(device, tuple) else device["device_type"]
+        if isinstance(device, dict):
+            # Dummy or JSON-derived device
+            device_id = device["hash_id"]
+            device_name = device["name"]
+            device_type = device["device_type"]
+        else:
+            # SQLAlchemy Row result
+            device_id = getattr(device, "hash_id", None)
+            device_name = getattr(device, "name", None)
+            device_type = getattr(device, "device_type", None)
         
         # Determine node type based on device type
         node_type = "device"
@@ -455,7 +481,9 @@ async def get_network_security_summary(
     Combines traffic statistics, security events, and assessment scores
     """
     # Get count of online devices
-    device_count_query = await db.execute("SELECT COUNT(*) FROM devices")
+    device_count_query = await db.execute(
+        text("SELECT COUNT(*) FROM devices")
+    )
     device_count = device_count_query.scalar() or random.randint(5, 50)
     
     # Generate security score (0-100)

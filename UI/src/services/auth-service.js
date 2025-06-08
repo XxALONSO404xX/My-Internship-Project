@@ -66,7 +66,7 @@ const getBaseApiUrl = () => {
 };
 
 // Updated API URL construction to align with backend structure
-const API_BASE_URL = getBaseApiUrl();
+export const API_BASE_URL = getBaseApiUrl();
 
 // IMPORTANT: The full API path structure analysis based on backend router configuration:
 // The API URL structure might vary depending on the backend implementation
@@ -181,19 +181,26 @@ export async function login(username, password, rememberMe = false) {
   console.log('Auth Service: Attempting login', { username, rememberMe });
   
   try {
-    // Add debug logging
     console.log('Auth Service: Sending login request to:', `${AUTH_API_URL}/login`);
     
-    // Make login request through Electron's secure channel
-    const response = await window.electronAPI.apiRequest({
-      url: `${AUTH_API_URL}/login`,
-      method: 'POST',
-      body: {
-        username,
-        password,
-        remember_me: rememberMe
-      }
-    });
+    // Login via Electron secure channel or HTTP fetch in browser
+    let response;
+    if (window.electronAPI && typeof window.electronAPI.apiRequest === 'function') {
+      response = await window.electronAPI.apiRequest({
+        url: `${AUTH_API_URL}/login`,
+        method: 'POST',
+        body: { username, password, remember_me: rememberMe }
+      });
+    } else {
+      // Browser fallback
+      const res = await fetch(`${AUTH_API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, remember_me: rememberMe })
+      });
+      const data = await res.json();
+      response = { ok: res.ok, status: data.status || res.status, data };
+    }
     
     // Log the complete response for debugging
     console.log('Auth Service: Received response:', JSON.stringify(response));
@@ -240,15 +247,45 @@ export async function login(username, password, rememberMe = false) {
       };
     }
     
-    // Store tokens securely in main process
-    await window.electronAPI.storeAuthToken({
-      token: tokenData.access_token,
-      refreshToken: tokenData.refresh_token,
-      expiresAt: tokenData.expires_at,
-      persistent: rememberMe
-    });
+    // Store tokens: try Electron API first, then fallback to localStorage
+    const isElectron = window && typeof window.electronAPI !== 'undefined';
+
+    if (isElectron && window.electronAPI && typeof window.electronAPI.storeAuthToken === 'function') {
+      try {
+        await window.electronAPI.storeAuthToken({
+          token: tokenData.access_token,
+          refreshToken: tokenData.refresh_token,
+          expiresAt: tokenData.expires_at,
+          persistent: rememberMe
+        });
+        console.log('Auth Service: Token stored via Electron API.');
+        // setUserData might still be relevant for Electron if it handles UI state not covered by main process token store
+        if (tokenData.client) setUserData({ client: tokenData.client, rememberMe });
+      } catch (electronError) {
+        console.error('Auth Service: Failed to store token via Electron API, falling back to localStorage.', electronError);
+        // Fallback to localStorage if Electron API fails
+        localStorage.setItem('authToken', tokenData.access_token);
+        if (tokenData.refresh_token) localStorage.setItem('refreshToken', tokenData.refresh_token);
+        if (tokenData.client) setUserData({ client: tokenData.client, rememberMe }); 
+      }
+    } else {
+      // Not in Electron or storeAuthToken not available, use localStorage
+      console.log('Auth Service: Not in Electron or storeAuthToken unavailable, using localStorage.');
+      localStorage.setItem('authToken', tokenData.access_token);
+      if (tokenData.refresh_token) localStorage.setItem('refreshToken', tokenData.refresh_token);
+      // Store user data (like client info)
+      if (tokenData.client) setUserData({ client: tokenData.client, rememberMe }); 
+    }
     
     console.log('Auth Service: Login successful');
+    
+    // Ensure authToken stored in localStorage for fallback headers
+    try {
+      localStorage.setItem('authToken', tokenData.access_token);
+      if (tokenData.refresh_token) localStorage.setItem('refreshToken', tokenData.refresh_token);
+    } catch (e) {
+      console.warn('Auth Service: Failed to persist authToken to localStorage', e);
+    }
     
     // Return success with client data and token info
     return {
@@ -1123,6 +1160,49 @@ export async function getCurrentUser() {
       }
     };
   }
+}
+
+// Function to get the API token, aware of Electron environment
+export async function getApiToken() {
+  try {
+    // Check if we're in Electron environment
+    const isElectron = window && typeof window.electronAPI !== 'undefined';
+    
+    if (isElectron && window.electronAPI && window.electronAPI.getAuthToken) {
+      // In Electron app
+      console.log('Auth Service (getApiToken Electron): Calling window.electronAPI.getAuthToken()');
+      const authData = await window.electronAPI.getAuthToken(); 
+      console.log('Auth Service (getApiToken Electron): Received authData:', authData);
+      let token = null;
+      if (typeof authData === 'string') {
+        token = authData; // authData is the token string itself
+      } else if (authData && typeof authData.token === 'string') {
+        token = authData.token; // authData is an object with a token property
+      }
+      console.log('Auth Service (getApiToken Electron): Returning token:', token);
+      return token;
+    } else {
+      // In browser or if electronAPI is not configured for this
+      const token = localStorage.getItem('authToken');
+      console.log('Auth Service (getApiToken localStorage): Returning token:', token);
+      return token;
+    }
+  } catch (error) {
+    console.error('Auth Service (getApiToken): Error retrieving token:', error);
+    return null; // Return null on error to indicate failure
+  }
+}
+
+/**
+ * Provides auth headers for API calls, reading token from storage-service or fallback to localStorage 'authToken'.
+ */
+export async function getAuthHeaders() {
+  const userData = getUserData() || {};
+  const token = userData.token || localStorage.getItem('authToken');
+  console.log('getAuthHeaders token →', token);
+  return {
+    Authorization: token ? `Bearer ${token}` : ''
+  };
 }
 
 /**

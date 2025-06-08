@@ -329,7 +329,7 @@ class VulnerabilityService:
                 # Update scan status
                 scan.status = "error"
                 scan.end_time = datetime.now()
-                scan.result = {"error": "Device not found"}
+                scan.results = {"error": "Device not found"}
                 await self.db.commit()
                 return
             
@@ -344,7 +344,7 @@ class VulnerabilityService:
             if not device.is_online and random.random() < 0.8:  # 80% chance to fail if offline
                 scan.status = "error"
                 scan.end_time = datetime.now()
-                scan.result = {"error": "Device went offline during scan"}
+                scan.results = {"error": "Device went offline during scan"}
                 await self.db.commit()
                 
                 logger.warning(f"Vulnerability scan {scan_id} failed: device went offline")
@@ -371,22 +371,22 @@ class VulnerabilityService:
             # Update scan status
             scan.status = "completed"
             scan.end_time = datetime.now()
-            scan.result = {
+            scan.results = {
                 "vulnerabilities_found": len(vulnerabilities),
                 "risk_score": calculate_risk_score(vulnerabilities),
                 "scan_summary": f"Found {len(vulnerabilities)} vulnerabilities"
             }
             await self.db.commit()
             
-            # Send a notification if vulnerabilities found
-            if vulnerabilities:
-                notification_helper = NotificationHelper(self.db)
-                await notification_helper.create_vulnerability_notification(
-                    device_id=device.hash_id,
-                    vulnerability_count=len(vulnerabilities),
-                    risk_score=scan.result["risk_score"],
-                    critical_count=sum(1 for v in vulnerabilities if v.get("severity") == "CRITICAL")
-                )
+            # Always send a vulnerability notification, even if zero findings
+            notification_helper = NotificationHelper(self.db)
+            await notification_helper.create_vulnerability_notification(
+                device_id=device.hash_id,
+                vulnerability_count=len(vulnerabilities),
+                risk_score=scan.results["risk_score"],
+                critical_count=sum(1 for v in vulnerabilities if v.get("severity") == "CRITICAL"),
+                vulnerabilities=vulnerabilities
+            )
             
             logger.info(f"Vulnerability scan {scan_id} completed with {len(vulnerabilities)} findings")
         except Exception as e:
@@ -401,7 +401,7 @@ class VulnerabilityService:
                 if scan:
                     scan.status = "error"
                     scan.end_time = datetime.now()
-                    scan.result = {"error": str(e)}
+                    scan.results = {"error": str(e)}
                     await self.db.commit()
             except Exception as update_err:
                 logger.error(f"Failed to update scan status: {str(update_err)}")
@@ -431,7 +431,7 @@ class VulnerabilityService:
             "start_time": scan.start_time.isoformat(),
             "end_time": scan.end_time.isoformat() if scan.end_time else None,
             "duration_seconds": (scan.end_time - scan.start_time).total_seconds() if scan.end_time else None,
-            "result": scan.result,
+            "result": scan.results,
             "vulnerabilities": []
         }
         
@@ -445,6 +445,7 @@ class VulnerabilityService:
                 "cvss_score": vuln_scan.cvss_score,
                 "affected_component": vuln_scan.affected_component,
                 "fix_available": vuln_scan.fix_available,
+                "detected_at": vuln_scan.timestamp.isoformat() if vuln_scan.timestamp else None,
                 "remediation": vuln_scan.remediation
             })
         
