@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useContext } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -47,7 +47,7 @@ const NavItem = ({
   onItemClick,
 }) => {
   const { pathname } = useLocation();
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = React.useState(false);
   const hasSubItems = subItems.length > 0;
   
   const isActive = pathname === to || 
@@ -76,9 +76,11 @@ const NavItem = ({
       >
         <Flex
           align="center"
-          px={4}
+          justify={isExpanded ? 'flex-start' : 'center'}
+          w="100%"
+          px={isExpanded ? 4 : 0}
           py={4}
-          mx={2}
+          mx={isExpanded ? 2 : 0}
           my={1}
           borderRadius="lg"
           bg={isActive ? activeBg : 'transparent'}
@@ -134,15 +136,14 @@ const NavItem = ({
 };
 
 // Sidebar component
-const Sidebar = ({ isOpen, onClose }) => {
+const Sidebar = ({ isOpen, onClose, isExpanded, onToggle, display }) => {
   const { user, logout } = useContext(AuthContext);
-  const [isExpanded, setIsExpanded] = useState(true);
   const navigate = useNavigate();
   const isMobile = useBreakpointValue({ base: true, md: false });
   
   // Navigation links
   const navItems = [
-    { name: 'Dashboard', icon: FiHome,     to: '/',           roles: ['admin','user'] },
+    { name: 'Dashboard', icon: FiHome,     to: '/dashboard',  roles: ['admin','user'] },
     { name: 'Devices',   icon: FiCpu,      to: '/devices',     roles: ['admin','user'] },
     { name: 'Activity',  icon: FiActivity, to: '/activities',  roles: ['admin','user'],
       subItems: [
@@ -173,7 +174,7 @@ const Sidebar = ({ isOpen, onClose }) => {
     if (isMobile) {
       onClose?.();
     } else {
-      setIsExpanded(!isExpanded);
+      onToggle?.();
     }
   };
 
@@ -185,7 +186,7 @@ const Sidebar = ({ isOpen, onClose }) => {
     <>
       <Box
         as="aside"
-        display="flex"
+        display={display}
         flexDirection="column"
         bg={bgColor}
         borderRightWidth="1px"
@@ -206,8 +207,8 @@ const Sidebar = ({ isOpen, onClose }) => {
       <Flex
         h="16"
         align="center"
-        justify="space-between"
-        px={4}
+        justify={isExpanded ? 'space-between' : 'center'}
+        px={isExpanded ? 4 : 0}
         borderBottomWidth="1px"
         borderBottomColor={borderColor}
       >

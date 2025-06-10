@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Drawer,
@@ -14,13 +14,21 @@ import { Outlet } from 'react-router-dom';
 
 export default function Layout() {
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const [isExpanded, setIsExpanded] = useState(true);
+  const toggleExpand = () => setIsExpanded(prev => !prev);
   const mobileBg = useColorModeValue('white', 'gray.800');
   const mobileBorder = useColorModeValue('gray.200', 'gray.700');
   const mobileText = useColorModeValue('gray.800', 'white');
   return (
     <Box minH="100vh">
       {/* Desktop sidebar */}
-      <Sidebar onClose={onClose} display={{ base: 'none', md: 'block' }} />
+      <Sidebar 
+        isOpen={isOpen} 
+        onClose={onClose} 
+        display={{ base: 'none', md: 'flex' }} 
+        isExpanded={isExpanded} 
+        onToggle={toggleExpand} 
+      />
       {/* Mobile drawer */}
       <Drawer
         autoFocus={false}
@@ -31,7 +39,13 @@ export default function Layout() {
         size="full"
       >
         <DrawerContent>
-          <Sidebar onClose={onClose} />
+          <Sidebar 
+            isOpen={isOpen} 
+            onClose={onClose} 
+            display={{ base: 'flex', md: 'none' }} 
+            isExpanded={isExpanded} 
+            onToggle={toggleExpand} 
+          />
         </DrawerContent>
       </Drawer>
       {/* Mobile menu button */}
@@ -55,7 +69,7 @@ export default function Layout() {
         </Box>
       </Flex>
       {/* Main content area */}
-      <Box ml={{ base: 0, md: 60 }} p="4">
+      <Box ml={{ base: 0, md: isExpanded ? '280px' : '80px' }} p="4">
         <Outlet />
       </Box>
     </Box>

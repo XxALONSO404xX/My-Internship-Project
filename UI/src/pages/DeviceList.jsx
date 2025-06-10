@@ -2,14 +2,15 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Box, Spinner, Skeleton, Badge, Stack, Text, Button, Heading, Input, Select, SimpleGrid, Flex, useToast,
   Icon, useDisclosure, useBreakpointValue, useColorModeValue, Modal, ModalOverlay, ModalContent, ModalHeader,
-  ModalBody, ModalFooter, ModalCloseButton, Progress, VStack, HStack, Image
+  ModalBody, ModalFooter, ModalCloseButton, Progress, VStack, HStack, Image, InputGroup, InputLeftElement
 } from '@chakra-ui/react';
 import { InfiniteScroll } from '../components/InfiniteScroll';
 import DeviceCard from '../components/DeviceCard';
+
 import FullScreenLoader from '../components/FullScreenLoader';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { getDevices, toggleDevicePower } from '../services/device-service';
-import { FiRadio, FiCheck, FiWifi, FiServer, FiShield, FiActivity } from 'react-icons/fi';
+import { FiRadio, FiCheck, FiWifi, FiServer, FiShield, FiActivity, FiSearch, FiPlus } from 'react-icons/fi';
 import { keyframes } from '@emotion/react';
 
 export default function DeviceList() {
@@ -151,9 +152,13 @@ export default function DeviceList() {
 
   const toggleExpand = (id) => {
     setExpandedIds(prev => {
-      const s = new Set(prev);
-      s.has(id) ? s.delete(id) : s.add(id);
-      return s;
+      const newIds = new Set(prev);
+      if (newIds.has(id)) {
+        newIds.delete(id);
+      } else {
+        newIds.add(id);
+      }
+      return newIds;
     });
   };
 
@@ -285,29 +290,59 @@ export default function DeviceList() {
   if (error) return <Text color='red.500'>Error: {error}</Text>;
 
   return (
-    <Box p={8}>
-      <FullScreenLoader isOpen={isScanning} message="Discovering devices..." />
-      <Flex justify="space-between" align="center" mb={6}>
-        <Heading>Devices</Heading>
-        <Button
-          leftIcon={isScanning ? <Spinner size="sm" /> : <Icon as={FiRadio} />}
-          colorScheme="primary"
-          onClick={() => handleScan()}
-          isLoading={isScanning}
-          loadingText="Discovering devices..."
-          isDisabled={scanCooldown > 0}
-          animation={scanCooldown === 0 && !isScanning ? `${pulse} 2s infinite` : 'none'}
-          _hover={scanCooldown === 0 ? { transform: 'scale(1.03)' } : {}}
-          transition="all 0.2s"
-          size="md"
-          px={6}
-          py={2}
-          borderRadius="md"
-          boxShadow={scanCooldown === 0 ? '0 0 15px rgba(33, 150, 243, 0.4)' : 'none'}
-        >
-          {scanCooldown > 0 ? `Scan (${scanCooldown}s)` : 'Scan Devices'}
-        </Button>
-      </Flex>
+    <Box p={{ base: 4, md: 8 }}>
+      <FullScreenLoader isOpen={isScanning} />
+
+      {/* Header */}
+      <VStack spacing={8} align="stretch" mb={8}>
+        <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
+          <Box>
+            <VStack align="start" spacing={0}>
+              <Heading as="h1" size="lg">Device Fleet</Heading>
+              <Text color={useColorModeValue('gray.500', 'gray.400')}>
+                An overview of your connected devices.
+              </Text>
+            </VStack>
+            </Box>
+          </Flex>
+
+        {/* Toolbar */}
+        <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
+          <InputGroup w={{ base: '100%', md: '350px' }}>
+            <InputLeftElement pointerEvents="none">
+              <Icon as={FiSearch} color="gray.400" />
+            </InputLeftElement>
+            <Input
+              placeholder="Search by name, IP, or MAC address..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              borderRadius="md"
+              variant="filled"
+            />
+          </InputGroup>
+          <HStack spacing={4}>
+              <Select
+                  value={statusFilter}
+                  onChange={e => setStatusFilter(e.target.value)}
+                  w={{ base: '100%', md: '150px' }}
+                  variant="filled"
+              >
+                  <option value="all">All Statuses</option>
+                  <option value="online">Online</option>
+                  <option value="offline">Offline</option>
+              </Select>
+              <Button
+                  onClick={handleScan}
+                  isLoading={isScanning}
+                  disabled={scanCooldown > 0}
+                  colorScheme="blue"
+                  variant="outline"
+              >
+                  {scanCooldown > 0 ? `Scanning... (${scanCooldown}s)` : 'Scan Network'}
+              </Button>
+          </HStack>
+        </Flex>
+      </VStack>
       
       {/* Initial Scan Modal */}
       <Modal isOpen={isOpen} onClose={() => {}} closeOnOverlayClick={false} isCentered size="xl">
@@ -395,19 +430,20 @@ export default function DeviceList() {
         hasMore={hasMore} 
         loader={<Spinner mt={4} />}
       >
-        <SimpleGrid minChildWidth="350px" spacing={6} mt={6} justifyItems="center" mx="auto">
+        <SimpleGrid minChildWidth="360px" spacing={8} mt={8} data-cy="device-list-grid">
           {filteredDevices.map(device => (
-            <Box key={device.hash_id} w="100%" maxW="350px">
               <DeviceCard
+                key={device.hash_id}
                 device={device}
                 isExpanded={expandedIds.has(device.hash_id)}
                 onToggleExpand={() => toggleExpand(device.hash_id)}
                 onTogglePower={() => handleTogglePower(device.hash_id, device.is_online)}
               />
-            </Box>
           ))}
         </SimpleGrid>
       </InfiniteScroll>
+
+
     </Box>
   );
 }

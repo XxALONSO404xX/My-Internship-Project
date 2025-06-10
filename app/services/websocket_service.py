@@ -104,7 +104,14 @@ class WebSocketManager:
             "failed": 0,
             "errors": []
         }
-
+        
+        # Suppress in-progress rule_execution notifications to prevent spam
+        if message.get("type") == "notification":
+            data = message.get("data", {})
+            if data.get("event_type") == "rule_execution" and data.get("status") != "completed":
+                results["skipped"] = True
+                return results
+        
         # Deduplication check (concurrency-safe)
         signature = self._generate_signature(message)
         now = time.time()
@@ -139,7 +146,7 @@ class WebSocketManager:
                 logger.error(f"Broadcast error for client {client_id}: {str(e)}")
         
         # Log delivery stats only if there were connections to deliver to
-        if results["total"] > 0:
+        if results["total"] > 0 and not results.get("skipped", False):
             logger.info(f"Notification broadcast results: {results['delivered']}/{results['total']} delivered")
         
         results["success"] = results["delivered"] > 0

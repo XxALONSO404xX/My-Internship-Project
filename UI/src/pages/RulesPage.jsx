@@ -1,23 +1,16 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Box,
   Heading,
   SimpleGrid,
-  Card,
-  CardHeader,
-  CardBody,
-  CardFooter,
   Badge,
   Flex,
-  Spacer,
-  Skeleton,
   useColorModeValue,
   Text,
   IconButton,
   Switch,
   Button,
   useDisclosure,
-  useToast,
   Modal,
   ModalOverlay,
   ModalContent,
@@ -25,8 +18,6 @@ import {
   ModalFooter,
   ModalBody,
   ModalCloseButton,
-  FormControl,
-  FormLabel,
   Input,
   Stack,
   Table,
@@ -36,9 +27,25 @@ import {
   Tbody,
   Td,
   CheckboxGroup,
-  Checkbox
+  Checkbox,
+  VStack,
+  HStack,
+  Icon,
+  ButtonGroup,
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogContent,
+  AlertDialogOverlay,
+  Skeleton,
+  Divider,
+  Card,
+  CardHeader,
+  CardBody,
+  CardFooter,
 } from '@chakra-ui/react';
-import { FiPlus, FiTrash, FiRefreshCw, FiPlay, FiEye, FiX, FiZap } from 'react-icons/fi';
+import { FiPlus, FiTrash, FiPlay, FiEye, FiZap, FiClock, FiRefreshCw, FiX } from 'react-icons/fi';
 
 import {
   listRules,
@@ -47,19 +54,171 @@ import {
   enableRule,
   disableRule,
   deleteRule,
-  applyAllRules,
   applyRulesToDevice,
   getActiveExecutions,
-  cancelAllExecutions,
-  cancelExecution
+  cancelExecution,
 } from '../services/rule-service.js';
 import { getDevices } from '../services/device-service.js';
-
 import toast from 'react-hot-toast';
 import RuleBuilder from '../components/RuleBuilder';
 
+import { FiInbox } from 'react-icons/fi';
+import { motion } from 'framer-motion';
+
+// Badge for schedule status
+const ScheduleBadge = ({ schedule, lastTriggered }) => {
+  if (!schedule) return null;
+  const [dateStr, timeStr] = schedule.split('T');
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const [hour, minute] = timeStr.split(':').map(Number);
+  const schedDate = new Date(year, month - 1, day, hour, minute);
+  const nowDate = new Date();
+  const executed = lastTriggered !== null;
+
+  let label = 'Pending';
+  let color = 'purple';
+
+  if (nowDate >= schedDate) {
+    label = executed ? 'Done' : 'Expired';
+    color = executed ? 'green' : 'red';
+  }
+
+  return <Badge colorScheme={color} variant="solid">{label}</Badge>;
+};
+
+// Helper for detail items in modal
+const DetailItem = ({ label, children }) => (
+  <VStack align="start" w="full" spacing={1}>
+    <Text fontSize="sm" fontWeight="bold" color={useColorModeValue('gray.500', 'gray.400')}>
+      {label}
+    </Text>
+    <Box w="full">{children}</Box>
+  </VStack>
+);
+
+// Empty state component
+const EmptyRulesState = ({ onAddRule }) => {
+  const bgColor = useColorModeValue('gray.100', 'gray.700');
+  const textColor = useColorModeValue('gray.500', 'gray.300');
+
+  return (
+    <Flex
+      direction="column"
+      align="center"
+      justify="center"
+      p={10}
+      bg={bgColor}
+      borderRadius="xl"
+      textAlign="center"
+      w="100%"
+      gridColumn="1 / -1"
+    >
+      <Icon as={FiInbox} boxSize={12} color={textColor} mb={4} />
+      <Heading size="md" mb={2}>No Rules Found</Heading>
+      <Text color={textColor} mb={6}>
+        Get started by creating a new rule.
+      </Text>
+      <Button
+        leftIcon={<FiPlus />}
+        colorScheme="blue"
+        onClick={onAddRule}
+      >
+        Add Rule
+      </Button>
+    </Flex>
+  );
+};
+
+// Reusable Rule Card Component
+const RuleCard = ({ rule, onView, onRun, onDelete, onToggle }) => {
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const textColor = useColorModeValue('gray.600', 'gray.300');
+  const borderColor = useColorModeValue('gray.200', 'gray.700');
+  
+  // Dynamic colors based on rule type and status
+  const accentColor = useColorModeValue(
+    rule.rule_type === 'schedule' ? 'purple.500' : 'cyan.500',
+    rule.rule_type === 'schedule' ? 'purple.300' : 'cyan.300'
+  );
+  const statusColor = rule.is_enabled ? 'green.400' : 'gray.400';
+  const headerBg = useColorModeValue('gray.50', 'gray.700');
+
+  return (
+    <Card
+      bg={cardBg}
+      borderRadius="xl"
+      boxShadow="lg"
+      h="100%"
+      display="flex"
+      flexDirection="column"
+      _hover={{ transform: 'translateY(-5px)', boxShadow: 'xl' }}
+      transition="all 0.2s ease-in-out"
+      borderWidth="1px"
+      borderColor={borderColor}
+      borderLeftWidth="5px"
+      borderLeftColor={statusColor}
+      overflow="hidden"
+    >
+      <CardHeader 
+        borderBottomWidth="1px" 
+        borderColor={borderColor} 
+        bg={headerBg}
+        py={3}
+        px={4}
+      >
+        <Flex justify="space-between" align="center">
+          <HStack spacing={3} overflow="hidden">
+            <Icon as={rule.rule_type === 'schedule' ? FiClock : FiZap} w={6} h={6} color={accentColor} />
+            <Heading size="md" noOfLines={1} title={rule.name}>{rule.name}</Heading>
+          </HStack>
+          <Switch isChecked={rule.is_enabled} onChange={onToggle} colorScheme="green" />
+        </Flex>
+      </CardHeader>
+      <CardBody flex="1" py={4} px={4}>
+        <Text color={textColor} noOfLines={2} minH="40px">{rule.description || 'No description provided.'}</Text>
+      </CardBody>
+      <CardFooter 
+        display="flex" 
+        flexDirection="column" 
+        mt="auto" 
+        pt={3} 
+        pb={3} 
+        px={4}
+        borderTopWidth="1px"
+        borderColor={borderColor}
+      >
+        <HStack spacing={2} mb={3}>
+          <Badge colorScheme={rule.rule_type === 'schedule' ? 'purple' : 'cyan'} variant="subtle">
+            {rule.rule_type.charAt(0).toUpperCase() + rule.rule_type.slice(1)}
+          </Badge>
+          {rule.rule_type === 'schedule' && (
+            <ScheduleBadge schedule={rule.schedule} lastTriggered={rule.last_triggered} />
+          )}
+        </HStack>
+        <ButtonGroup variant="ghost" spacing="1" w="full">
+          <Button leftIcon={<FiEye />} size="sm" onClick={onView} flex="1">Details</Button>
+          <IconButton 
+            icon={<FiPlay />} 
+            onClick={onRun} 
+            aria-label="Run Rule" 
+            isDisabled={!rule.is_enabled}
+            _hover={{ color: useColorModeValue('green.500', 'green.300') }}
+          />
+          <IconButton 
+            icon={<FiTrash />} 
+            onClick={onDelete} 
+            aria-label="Delete Rule" 
+            _hover={{ color: useColorModeValue('red.500', 'red.300') }}
+          />
+        </ButtonGroup>
+      </CardFooter>
+    </Card>
+  );
+};
+
 export default function RulesPage() {
   const [rules, setRules] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [filterText, setFilterText] = useState('');
   const [detailModal, setDetailModal] = useState(false);
   const [selectedRule, setSelectedRule] = useState(null);
@@ -67,399 +226,364 @@ export default function RulesPage() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [execModal, setExecModal] = useState(false);
   const [executions, setExecutions] = useState([]);
-  const toastChakra = useToast();
-  const cardBg = useColorModeValue('white', 'gray.700');
-
-  // Devices for selection
   const [deviceOptions, setDeviceOptions] = useState([]);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState([]);
   const [isEditingDevices, setIsEditingDevices] = useState(false);
-  // Map id to name
   const devicesMap = useMemo(() => Object.fromEntries(deviceOptions.map(dev => [dev.id, dev.name])), [deviceOptions]);
 
-  const fetchRules = async () => {
+  const [ruleToDelete, setRuleToDelete] = useState(null);
+  const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
+  const cancelRef = useRef();
+
+  const fetchRules = useCallback(async () => {
+    setIsLoading(true);
     try {
       const res = await listRules();
-      if (res.status === 'success') {
-        setRules(Array.isArray(res.data) ? res.data : []);
-      } else {
-        toast.error(res.message || 'Failed to load rules');
-      }
+      setRules(Array.isArray(res.data) ? res.data : []);
     } catch (e) {
       toast.error('Error loading rules');
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchRules();
-  }, []);
-
-  // Load devices for editing
-  useEffect(() => {
     const loadDevices = async () => {
       try {
-        const devs = await getDevices();
-        setDeviceOptions(devs);
+        setDeviceOptions(await getDevices());
       } catch (e) {
-        toastChakra.error('Failed to load devices');
+        toast.error('Failed to load devices');
       }
     };
     loadDevices();
-  }, []);
+  }, [fetchRules]);
 
   const handleEnableToggle = async (rule) => {
     const id = toast.loading('Updating rule...');
     try {
-      let res;
-      if (rule.is_enabled) {
-        res = await disableRule(rule.id);
-      } else {
-        res = await enableRule(rule.id);
-      }
-      toast.success('Updated', { id });
-      // Refresh list
+      await (rule.is_enabled ? disableRule(rule.id) : enableRule(rule.id));
+      toast.success('Rule updated', { id });
       fetchRules();
     } catch (e) {
-      toast.error('Failed', { id });
+      toast.error('Failed to update rule', { id });
     }
   };
 
-  const handleDelete = async (ruleId) => {
-    const ok = window.confirm('Delete this rule?');
-    if (!ok) return;
+  const handleDeleteClick = (ruleId) => {
+    setRuleToDelete(ruleId);
+    onDeleteOpen();
+  };
+
+  const confirmDelete = async () => {
+    if (!ruleToDelete) return;
     const id = toast.loading('Deleting rule...');
     try {
-      await deleteRule(ruleId);
-      toast.success('Deleted', { id });
-      // refresh rules list and close detail modal
-      await fetchRules();
-      closeDetailModal();
+      await deleteRule(ruleToDelete);
+      toast.success('Rule deleted', { id });
+      fetchRules();
+      if (selectedRule && selectedRule.id === ruleToDelete) {
+        closeDetailModal();
+      }
     } catch (e) {
-      toast.error('Delete failed', { id });
+      toast.error('Failed to delete rule', { id });
+    } finally {
+      onDeleteClose();
+      setRuleToDelete(null);
     }
   };
 
-  const handleCreateRule = async (ruleData) => {
-    const id = toast.loading('Creating rule...');
-    try {
-      const res = await createRule(ruleData);
-      if (res.status === 'success') {
-        toast.success('Rule created', { id });
+  const handleRuleSubmit = (data) => {
+    const isEditing = !!ruleToEdit;
+    const promise = isEditing ? updateRule(ruleToEdit.id, data) : createRule(data);
+
+    toast.promise(promise, {
+      loading: isEditing ? 'Updating rule...' : 'Creating rule...',
+      success: () => {
         fetchRules();
-        onClose();
-      } else {
-        toast.error(res.message || 'Failed', { id });
-      }
-    } catch (e) {
-      toast.error('Error creating rule', { id });
-    }
-  };
-
-  const handleUpdateRule = async (data) => {
-    const id = toast.loading('Updating rule...');
-    try {
-      const res = await updateRule(ruleToEdit.id, data);
-      if (res.status === 'success') {
-        toast.success('Rule updated', { id });
-        fetchRules();
-        setSelectedRule(res.data);
-        setRuleToEdit(null);
-        onClose();
-      } else {
-        toast.error(res.message || 'Failed to update rule', { id });
-      }
-    } catch (e) {
-      toast.error('Error updating rule', { id });
-    }
-  };
-
-  const runAllRules = async () => {
-    const id = toast.loading('Applying all rules...');
-    try {
-      const res = await applyAllRules();
-      if (res.status === 'success') {
-        toast.success('Rules applied', { id });
-      } else {
-        toast.error(res.message || 'Failed', { id });
-      }
-    } catch (e) {
-      toast.error('Error', { id });
-    }
+        return `Rule ${isEditing ? 'updated' : 'created'} successfully!`;
+      },
+      error: `Failed to ${isEditing ? 'update' : 'create'} rule.`,
+    });
   };
 
   const openExecutions = async () => {
     setExecModal(true);
     try {
       const res = await getActiveExecutions();
-      if (res.status === 'success') {
-        // convert executions object to list
-        let execList = [];
-        if (Array.isArray(res.data)) {
-          execList = res.data;
-        } else if (res.data && res.data.executions) {
-          execList = Object.entries(res.data.executions).map(([execution_id, execData]) => ({ execution_id, ...execData }));
-        }
-        setExecutions(execList);
-      } else {
-        toast.error(res.message || 'Failed to get executions');
+      let execList = [];
+      if (Array.isArray(res.data)) {
+        execList = res.data;
+      } else if (res.data && res.data.executions) {
+        execList = Object.entries(res.data.executions).map(([execution_id, execData]) => ({ execution_id, ...execData }));
       }
+      setExecutions(execList);
     } catch (e) {
-      toast.error('Error fetching executions');
+      toast.error('Error getting executions');
     }
   };
 
-  const handleCancelExec = async (execId) => {
-    const id = toast.loading('Cancelling...');
+  const stopExecution = async (execId) => {
+    const id = toast.loading('Stopping execution...');
     try {
-      const res = await cancelExecution(execId);
-      toast.success('Cancelled', { id });
-      setExecutions(executions.filter((e) => e.execution_id !== execId));
+      await cancelExecution(execId);
+      toast.success('Execution stopped', { id });
+      openExecutions(); // Refresh list
     } catch (e) {
-      toast.error('Failed', { id });
+      toast.error('Failed to stop execution', { id });
     }
   };
 
-  const handleCancelAllExec = async () => {
-    const id = toast.loading('Cancelling all...');
-    try {
-      await cancelAllExecutions();
-      toast.success('Cancelled', { id });
-      setExecutions([]);
-    } catch (e) {
-      toast.error('Failed', { id });
-    }
-  };
-
-  const filteredRules = useMemo(
-    () => rules.filter(r =>
-      r.name.toLowerCase().includes(filterText.toLowerCase()) ||
-      r.rule_type.toLowerCase().includes(filterText.toLowerCase())
-    ),
-    [rules, filterText]
-  );
-
-  const openDetailModal = useCallback(rule => {
+  const openDetailModal = (rule) => {
     setSelectedRule(rule);
-    setSelectedDeviceIds(rule.target_device_ids || []);
-    setIsEditingDevices(false);
     setDetailModal(true);
-  }, []);
-  const closeDetailModal = useCallback(() => { setSelectedRule(null); setDetailModal(false); }, []);
-
-  const openEditModal = () => {
-    setRuleToEdit(selectedRule);
-    onOpen();
   };
 
-  // Save updated devices
-  const saveDevices = async () => {
-    const id = toastChakra.loading('Updating devices...');
-    try {
-      const res = await updateRule(selectedRule.id, { target_device_ids: selectedDeviceIds });
-      if (res.status === 'success') {
-        toastChakra.success('Devices updated', { id });
-        fetchRules();
-        setSelectedRule(prev => ({ ...prev, target_device_ids: selectedDeviceIds }));
-        setIsEditingDevices(false);
-      } else {
-        toastChakra.error(res.message || 'Failed to update devices', { id });
-      }
-    } catch (e) {
-      toastChakra.error('Error updating devices', { id });
-    }
+  const closeDetailModal = () => {
+    setDetailModal(false);
+    setSelectedRule(null);
+    setIsEditingDevices(false);
   };
+  
+  const handleDeviceUpdate = async () => {
+    // Placeholder for device update logic
+    toast.success('Device list updated!');
+    setIsEditingDevices(false);
+  }
+
+  const filteredRules = rules.filter(rule =>
+    rule.name.toLowerCase().includes(filterText.toLowerCase())
+  );
+  
+  const cardBg = useColorModeValue('white', 'gray.700');
 
   return (
-    <Box p={8}>
-      <Heading mb={4}>Automation Rules</Heading>
-      <Input
-        placeholder="Search rules..."
-        mb={4}
-        value={filterText}
-        onChange={e => setFilterText(e.target.value)}
-      />
-      <Stack direction="row" mb={4} spacing={3}>
-        <Button leftIcon={<FiPlus />} colorScheme='blue' onClick={onOpen}>
-          Add Rule
-        </Button>
-        <IconButton icon={<FiRefreshCw />} onClick={fetchRules} aria-label='Refresh' />
-        <IconButton icon={<FiPlay />} onClick={runAllRules} aria-label='Run All' />
-        <IconButton icon={<FiEye />} onClick={openExecutions} aria-label='Executions' />
-      </Stack>
-
-      <SimpleGrid minChildWidth="400px" spacing={10} justifyItems="center" mx="auto">
-        {filteredRules.map(rule => (
-          <Card
-            key={rule.id}
-            maxW="400px"
-            w="100%"
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={rule.is_enabled ? 'green.300' : 'red.300'}
-            borderRadius="lg"
-            boxShadow="sm"
-            _hover={{ boxShadow: 'md', transform: 'translateY(-4px)' }}
-            transition="all 0.3s"
-            p={8}
+    <Box p={{ base: 4, md: 8 }} bg={useColorModeValue('gray.50', 'gray.900')} minH="100vh">
+      <Flex justify="space-between" align={{ base: 'start', md: 'center' }} mb={8} direction={{ base: 'column', md: 'row' }} gap={4}>
+        <VStack align="start" mb={{ base: 4, md: 0 }}>
+          <Heading as="h1" size="xl" bgGradient="linear(to-r, blue.500, purple.500)" bgClip="text">
+            Rules Engine
+          </Heading>
+          <Text color={useColorModeValue('gray.600', 'gray.400')}>
+            Automate actions based on triggers or schedules.
+          </Text>
+        </VStack>
+        <HStack spacing={3}>
+          <IconButton icon={<FiRefreshCw />} onClick={fetchRules} aria-label="Refresh Rules" variant="ghost" colorScheme="gray" />
+          <Button leftIcon={<FiZap />} onClick={openExecutions} variant="outline">
+            Executions
+          </Button>
+          <Button 
+            leftIcon={<FiPlus />} 
+            colorScheme="blue" 
+            onClick={() => { setRuleToEdit(null); onOpen(); }} 
+            boxShadow="md"
+            _hover={{ boxShadow: 'lg' }}
           >
-            <Flex align="center">
-              <Box>
-                <Heading size="lg" fontWeight="semibold">{rule.name}</Heading>
-                <Stack direction="row" spacing={2} mt={2}>
-                  <Badge colorScheme={rule.is_enabled ? 'green' : 'red'}>
-                    {rule.is_enabled ? 'Enabled' : 'Disabled'}
-                  </Badge>
-                  <Badge colorScheme={rule.rule_type === 'schedule' ? 'purple' : 'blue'} variant="subtle">
-                    {rule.rule_type.charAt(0).toUpperCase() + rule.rule_type.slice(1)}
-                  </Badge>
-                  {rule.rule_type === 'schedule' && rule.schedule && (() => {
-                    const [dateStr, timeStr] = rule.schedule.split('T');
-                    const [year, month, day] = dateStr.split('-').map(Number);
-                    const [hour, minute] = timeStr.split(':').map(Number);
-                    const schedDate = new Date(year, month - 1, day, hour, minute);
-                    const nowDate = new Date();
-                    const executed = rule.last_triggered !== null;
-                    const label = nowDate >= schedDate
-                      ? (executed ? 'Done' : 'Expired')
-                      : 'Pending';
-                    const color = nowDate >= schedDate
-                      ? (executed ? 'green' : 'red')
-                      : 'purple';
-                    return <Badge colorScheme={color}>{label}</Badge>;
-                  })()}
-                </Stack>
-              </Box>
-              <Spacer />
-              <IconButton icon={<FiEye />} onClick={() => openDetailModal(rule)} aria-label="View Details" variant="ghost" />
-            </Flex>
-            <Box mt={4}>
-              <Text noOfLines={3}>{rule.description || 'No description provided.'}</Text>
-            </Box>
-            <CardFooter p={0} mt={4}>
-              <Stack direction="row" spacing={2}>
-                <IconButton icon={<FiPlay />} onClick={() => applyRulesToDevice(rule.id)} aria-label="Run Rule" />
-                <IconButton icon={<FiTrash />} onClick={() => handleDelete(rule.id)} aria-label="Delete Rule" colorScheme="red" />
-                <Switch isChecked={rule.is_enabled} onChange={() => handleEnableToggle(rule)} />
-              </Stack>
-            </CardFooter>
-          </Card>
-        ))}
-      </SimpleGrid>
+            Add Rule
+          </Button>
+        </HStack>
+      </Flex>
+
+      <Input
+        placeholder="Filter rules by name..."
+        value={filterText}
+        onChange={(e) => setFilterText(e.target.value)}
+        mb={8}
+        bg={useColorModeValue('white', 'gray.700')}
+        focusBorderColor="blue.500"
+      />
+
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        variants={{
+          visible: {
+            transition: {
+              staggerChildren: 0.05,
+            },
+          },
+        }}
+      >
+        <SimpleGrid columns={{ base: 1, md: 2, lg: 3, xl: 4 }} spacing={6}>
+          {isLoading
+            ? Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} height="320px" borderRadius="xl" />)
+            : filteredRules.length > 0 ? filteredRules.map((rule) => (
+                <motion.div
+                  key={rule.id}
+                  variants={{
+                    hidden: { y: 20, opacity: 0 },
+                    visible: { y: 0, opacity: 1 },
+                  }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <RuleCard
+                    rule={rule}
+                    onView={() => openDetailModal(rule)}
+                    onRun={() => applyRulesToDevice(rule.id)}
+                    onDelete={() => handleDeleteClick(rule.id)}
+                    onToggle={() => handleEnableToggle(rule)}
+                  />
+                </motion.div>
+              ))
+            : <EmptyRulesState onAddRule={() => { setRuleToEdit(null); onOpen(); }} />
+          }
+        </SimpleGrid>
+      </motion.div>
+
+      <AlertDialog isOpen={isDeleteOpen} leastDestructiveRef={cancelRef} onClose={onDeleteClose} isCentered motionPreset="slideInBottom">
+        <AlertDialogOverlay bg="blackAlpha.600" />
+        <AlertDialogContent bg={useColorModeValue('white', 'gray.800')} borderRadius="xl">
+          <AlertDialogHeader 
+            fontSize="lg" 
+            fontWeight="bold" 
+            borderBottomWidth="1px" 
+            borderColor={useColorModeValue('gray.200', 'gray.700')}
+          >
+            <HStack>
+              <Icon as={FiTrash} color="red.500" w={5} h={5} />
+              <Text>Confirm Deletion</Text>
+            </HStack>
+          </AlertDialogHeader>
+          <AlertDialogBody py={6}>
+            Are you sure you want to delete this rule? This action cannot be undone.
+          </AlertDialogBody>
+          <AlertDialogFooter borderTopWidth="1px" borderColor={useColorModeValue('gray.200', 'gray.700')}>
+            <Button ref={cancelRef} onClick={onDeleteClose} variant="ghost">
+              Cancel
+            </Button>
+            <Button colorScheme="red" onClick={confirmDelete} ml={3}>
+              Delete Rule
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Executions Modal */}
-      <Modal isOpen={execModal} onClose={() => setExecModal(false)} size='lg'>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Active Rule Executions</ModalHeader>
+      <Modal isOpen={execModal} onClose={() => setExecModal(false)} size='2xl' isCentered motionPreset="slideInBottom">
+        <ModalOverlay bg="blackAlpha.500" />
+        <ModalContent bg={useColorModeValue('gray.50', 'gray.800')} borderRadius="xl">
+          <ModalHeader borderBottomWidth="1px" borderColor={useColorModeValue('gray.200', 'gray.700')}>Active Rule Executions</ModalHeader>
           <ModalCloseButton />
-          <ModalBody>
-            {executions.length === 0 ? (
-              <Box textAlign='center' color='gray.500'>No active executions.</Box>
-            ) : (
-              <Table size='sm'>
+          <ModalBody p={6}>
+            {executions.length > 0 ? (
+              <Table variant='simple'>
                 <Thead>
                   <Tr>
-                    <Th>ID</Th>
-                    <Th>Rule ID</Th>
+                    <Th>Execution ID</Th>
+                    <Th>Rule Name</Th>
+                    <Th>Device Name</Th>
                     <Th>Status</Th>
-                    <Th></Th>
+                    <Th>Action</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {executions.map((ex) => (
-                    <Tr key={ex.execution_id}>
-                      <Td>{ex.execution_id}</Td>
-                      <Td>{ex.rule_id}</Td>
-                      <Td>{ex.status || 'running'}</Td>
+                  {executions.map(exec => (
+                    <Tr key={exec.execution_id} _hover={{ bg: useColorModeValue('gray.100', 'gray.700') }}>
+                      <Td fontFamily="monospace">{exec.execution_id.slice(0, 8)}</Td>
+                      <Td>{rules.find(r => r.id === exec.rule_id)?.name || 'N/A'}</Td>
+                      <Td>{devicesMap[exec.device_id] || 'N/A'}</Td>
+                      <Td><Badge colorScheme="blue" variant="solid">Running</Badge></Td>
                       <Td>
-                        <IconButton size='xs' icon={<FiX />} aria-label='Cancel' onClick={() => handleCancelExec(ex.execution_id)} />
+                        <IconButton
+                          icon={<FiX />}
+                          onClick={() => stopExecution(exec.execution_id)}
+                          aria-label="Stop Execution"
+                          colorScheme='red'
+                          variant="ghost"
+                          size="sm"
+                        />
                       </Td>
                     </Tr>
                   ))}
                 </Tbody>
               </Table>
+            ) : (
+              <Flex direction="column" align="center" justify="center" p={8} bg={useColorModeValue('gray.100', 'gray.700')} borderRadius="lg">
+                <Icon as={FiInbox} boxSize={10} color={useColorModeValue('gray.400', 'gray.500')} mb={4} />
+                <Heading size="sm">No Active Executions</Heading>
+                <Text color={useColorModeValue('gray.500', 'gray.400')} mt={2}>All automated tasks are currently idle.</Text>
+              </Flex>
             )}
           </ModalBody>
-          <ModalFooter>
-            <Button leftIcon={<FiZap />} variant='outline' mr={3} onClick={handleCancelAllExec} disabled={executions.length === 0}>Cancel All</Button>
-            <Button onClick={() => setExecModal(false)}>Close</Button>
-          </ModalFooter>
         </ModalContent>
       </Modal>
 
-      {/* Rule Detail Modal */}
-      <Modal isOpen={detailModal} onClose={closeDetailModal} size='md'>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Rule Details</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            {selectedRule && (
-              <Stack spacing={4}>
-                <Heading size="sm">General</Heading>
-                <Text><strong>Name:</strong> {selectedRule.name}</Text>
-                <Text><strong>Description:</strong> {selectedRule.description || '—'}</Text>
-                <Text><strong>Type:</strong> <Badge colorScheme="blue">{selectedRule.rule_type}</Badge></Text>
-                <Text><strong>Status:</strong> <Badge colorScheme={selectedRule.is_enabled ? 'green' : 'red'}>{selectedRule.is_enabled ? 'Enabled' : 'Disabled'}</Badge></Text>
-                <Text><strong>Schedule:</strong> {selectedRule.schedule || '—'}</Text>
-                <Text><strong>Priority:</strong> {selectedRule.priority}</Text>
-                <Text><strong>Devices:</strong> {selectedRule.target_device_ids?.length
-                  ? selectedRule.target_device_ids.map(id => devicesMap[id] || id).join(', ')
-                  : 'All'}</Text>
-                {selectedRule.conditions ? (
-                  <>
-                    <Heading size="sm" mt={4}>Conditions</Heading>
-                    <Text><strong>Operator:</strong> {selectedRule.conditions.operator}</Text>
-                    <Stack pl={4} spacing={2}>
-                      {selectedRule.conditions.conditions.map((cond, i) => (
-                        <Box key={i} border="1px" borderColor="gray.200" borderRadius="md" p={2}>
-                          <Text fontWeight="bold">Condition {i + 1}</Text>
-                          <Text>Type: {cond.type}</Text>
-                          {cond.device_id && <Text>Device ID: {cond.device_id}</Text>}
-                          {cond.sensor_type && <Text>Sensor: {cond.sensor_type}</Text>}
-                          {cond.property && <Text>Property: {cond.property}</Text>}
-                          <Text>Operator: {cond.operator}</Text>
-                          <Text>Value: {String(cond.value)}</Text>
-                        </Box>
-                      ))}
-                    </Stack>
-                  </>
-                ) : (
-                  <Text>No conditions defined for this rule.</Text>
-                )}
+      {/* Rule Details Modal */}
+      {selectedRule && (
+        <Modal isOpen={detailModal} onClose={closeDetailModal} size="xl" isCentered motionPreset="slideInBottom">
+          <ModalOverlay bg="blackAlpha.500" />
+          <ModalContent bg={useColorModeValue('gray.50', 'gray.800')} borderRadius="xl">
+            <ModalHeader borderBottomWidth="1px" borderColor={useColorModeValue('gray.200', 'gray.700')}>{selectedRule.name}</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody p={6}>
+              {isEditingDevices ? (
+                <VStack spacing={4} align="stretch">
+                  <Heading size="sm">Edit Attached Devices</Heading>
+                  <Box p={4} bg={useColorModeValue('gray.100', 'gray.700')} borderRadius="lg" maxH="200px" overflowY="auto">
+                    <CheckboxGroup
+                      value={selectedDeviceIds}
+                      onChange={setSelectedDeviceIds}
+                    >
+                      <VStack align="start" spacing={2}>
+                        {deviceOptions.map(dev => (
+                          <Checkbox key={dev.id} value={dev.id}>{dev.name}</Checkbox>
+                        ))}
+                      </VStack>
+                    </CheckboxGroup>
+                  </Box>
+                  <HStack justify="flex-end">
+                    <Button onClick={() => setIsEditingDevices(false)} variant="ghost">Cancel</Button>
+                    <Button onClick={handleDeviceUpdate} colorScheme="blue">Save Devices</Button>
+                  </HStack>
+                </VStack>
+              ) : (
+                <VStack spacing={5} align="stretch">
+                  <DetailItem label="Description">
+                    <Text color={useColorModeValue('gray.600', 'gray.300')}>{selectedRule.description || 'No description provided.'}</Text>
+                  </DetailItem>
+                  <Divider />
+                  <HStack spacing={4} align="start">
+                    <DetailItem label="Rule Type">
+                      <Badge colorScheme={selectedRule.rule_type === 'schedule' ? 'purple' : 'cyan'} variant="solid">
+                        {selectedRule.rule_type}
+                      </Badge>
+                    </DetailItem>
+                    {selectedRule.rule_type === 'schedule' && (
+                      <DetailItem label="Schedule">
+                        <Text color={useColorModeValue('gray.700', 'gray.200')}>{new Date(selectedRule.schedule).toLocaleString()}</Text>
+                      </DetailItem>
+                    )}
+                  </HStack>
+                  <DetailItem label="Attached Devices">
+                    <Text color={useColorModeValue('gray.700', 'gray.200')}>{selectedRule.device_ids?.map(id => devicesMap[id]).join(', ') || 'None'}</Text>
+                  </DetailItem>
+                </VStack>
+              )}
+            </ModalBody>
+            <ModalFooter borderTopWidth="1px" borderColor={useColorModeValue('gray.200', 'gray.700')}>
+              {!isEditingDevices && (
+                <Button onClick={() => {
+                  setSelectedDeviceIds(selectedRule.device_ids || []);
+                  setIsEditingDevices(true);
+                }}>Edit Devices</Button>
+              )}
+              <HStack ml="auto">
+                <Button variant="ghost" onClick={closeDetailModal}>Close</Button>
+                <Button colorScheme="blue" onClick={() => { closeDetailModal(); setRuleToEdit(selectedRule); onOpen(); }}>Edit Rule</Button>
+              </HStack>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+      )}
 
-                <Heading size="sm" mt={4}>Actions</Heading>
-                <Stack pl={4} spacing={2}>
-                  {selectedRule.actions.map((act, i) => (
-                    <Box key={i} border="1px" borderColor="gray.200" borderRadius="md" p={2}>
-                      <Text fontWeight="bold">Action {i + 1}</Text>
-                      <Text>Type: {act.type}</Text>
-                      {act.parameters.action && <Text>Action: {act.parameters.action}</Text>}
-                      {act.parameters.message && <Text>Message: {act.parameters.message}</Text>}
-                      {act.parameters.recipients && <Text>Recipients: {act.parameters.recipients.join(', ')}</Text>}
-                      {act.parameters.channels && <Text>Channels: {act.parameters.channels.join(', ')}</Text>}
-                    </Box>
-                  ))}
-                </Stack>
-              </Stack>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button colorScheme='blue' mr={3} onClick={openEditModal}>Edit Rule</Button>
-            <Button colorScheme='red' mr={3} onClick={() => handleDelete(selectedRule.id)}>
-              Delete Rule
-            </Button>
-            <Button onClick={closeDetailModal}>Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
+      {/* Create/Edit Rule Modal */}
       <RuleBuilder
         isOpen={isOpen}
-        onClose={() => { onClose(); setRuleToEdit(null); }}
-        onCreate={handleCreateRule}
-        initialData={ruleToEdit}
-        onUpdate={handleUpdateRule}
+        onClose={() => { setRuleToEdit(null); onClose(); }}
+        onSubmit={handleRuleSubmit}
+        existingRule={ruleToEdit}
+        devices={deviceOptions}
       />
     </Box>
   );

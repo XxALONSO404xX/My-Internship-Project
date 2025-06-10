@@ -487,7 +487,25 @@ class DeviceService:
         self.vulnerability_scanner = create_vulnerability_scanner(db)
         # Initialize activity service
         self.activity_service = ActivityService(db)
-    
+        
+    async def update_device_metrics(self, device_id: str, metrics: Dict[str, Any]) -> None:
+        """Simulate updating device metrics by creating SensorReading records."""
+        from app.models.sensor_reading import SensorReading
+        from datetime import datetime
+        # Record each metric as a new SensorReading
+        for sensor_type, value in metrics.items():
+            reading = SensorReading(
+                device_id=device_id,
+                sensor_type=sensor_type,
+                value=value,
+                unit="",
+                timestamp=datetime.utcnow(),
+                reading_metadata={}
+            )
+            self.db.add(reading)
+        # Commit all readings
+        await self.db.commit()
+        
     async def get_all_devices(self) -> List[Device]:
         """Get all devices"""
         query = select(Device)
@@ -1498,6 +1516,7 @@ class DeviceService:
         # Update device metadata with new state
         device_metadata["state"] = current_state
         device.device_metadata = device_metadata
+        await self.db.commit()
         
         # Return success result
         return result

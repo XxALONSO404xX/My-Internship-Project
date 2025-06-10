@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useForm, useFieldArray } from 'react-hook-form';
-import { useToast } from '@chakra-ui/react';
+import { useForm, Controller, useFieldArray } from 'react-hook-form';
 import {
   Modal,
   ModalOverlay,
@@ -10,7 +9,6 @@ import {
   ModalBody,
   ModalFooter,
   Button,
-  Stack,
   FormControl,
   FormLabel,
   Input,
@@ -18,246 +16,370 @@ import {
   Switch,
   IconButton,
   Box,
-  CheckboxGroup,
   Checkbox,
+  CheckboxGroup,
   HStack,
+  VStack,
   RadioGroup,
   Radio,
-  FormErrorMessage
+  FormErrorMessage,
+  useColorModeValue,
+  Heading,
+  Divider,
+  Text,
+  SimpleGrid,
+  useToast,
 } from '@chakra-ui/react';
 import { FiPlus, FiTrash } from 'react-icons/fi';
 import { getDevices } from '../services/device-service.js';
 
-export default function RuleBuilder({ isOpen, onClose, onCreate, initialData, onUpdate }) {
-  // default form values
-  const defaultValues = initialData ? {
-    name: initialData.name, description: initialData.description, rule_type: initialData.rule_type, is_enabled: initialData.is_enabled,
-    priority: initialData.priority, scheduleType: initialData.scheduleType, onceDatetime: initialData.onceDatetime, intervalValue: initialData.intervalValue, intervalUnit: initialData.intervalUnit,
-    time: initialData.time, weekdays: initialData.weekdays, target_device_ids: initialData.target_device_ids, conditions: initialData.conditions, actions: initialData.actions,
-  } : {
-    name: '', description: '', rule_type: 'condition', is_enabled: true,
-    priority: 1, scheduleType: 'once', onceDatetime: '', intervalValue: 1, intervalUnit: 'minutes',
-    time: '', weekdays: [], target_device_ids: [], conditions: [], actions: [],
-  };
-  const { register, control, handleSubmit, watch, setValue, reset, formState: { errors, isValid } } = useForm({ defaultValues, mode: 'onChange' });
-  // reset form on open
-  useEffect(() => { if (isOpen) reset(defaultValues); }, [isOpen, initialData]);
+// Helper component to create styled sections in the form
+const FormSection = ({ title, children }) => (
+  <VStack spacing={4} align="stretch" w="full">
+    <Heading size="sm" color={useColorModeValue('gray.600', 'gray.300')}>{title}</Heading>
+    <Box pl={4} borderLeftWidth="2px" borderColor={useColorModeValue('gray.200', 'gray.700')}>
+      <VStack spacing={4} align="stretch">
+        {children}
+      </VStack>
+    </Box>
+  </VStack>
+);
+
+export default function RuleBuilder({ isOpen, onClose, onSubmit, existingRule, devices }) {
   const toast = useToast();
-  // min datetime for one-time schedules
-  const now = new Date();
-  const minDatetimeLocal = now.toISOString().slice(0,16);
+  const isEditing = !!existingRule;
+
+  // Normalize device IDs as strings, prefer hash_id when present (older API)
+  const deviceList = devices.map(d => ({ id: String(d.hash_id ?? d.id), name: d.name }));
+
+  const defaultValues = {
+    name: '',
+    description: '',
+    rule_type: 'condition',
+    is_enabled: true,
+    priority: 1,
+    scheduleType: 'once',
+    onceDatetime: '',
+    intervalValue: 1,
+    intervalUnit: 'minutes',
+    time: '',
+    weekdays: [],
+    target_device_ids: [],
+    conditions: [],
+    actions: [],
+  };
+
+  const { register, handleSubmit, watch, setValue, setError, reset, control, formState: { errors, isValid } } = useForm({ 
+    defaultValues,
+    mode: 'onChange', 
+    shouldFocusError: false
+  });
+
+  useEffect(() => {
+    if (isEditing && existingRule) {
+      const scheduleParts = existingRule.schedule ? existingRule.schedule.split(' ') : [];
+      let parsedSchedule = {};
+
+      if (existingRule.schedule && existingRule.schedule.includes('*/')) { // Interval
+        parsedSchedule = { scheduleType: 'interval', intervalValue: parseInt(scheduleParts[0].replace('*/', '')), intervalUnit: scheduleParts[1] };
+      } else if (existingRule.schedule) { // Time-based
+        const time = scheduleParts[0];
+        const weekdays = scheduleParts[4];
+        if (weekdays && weekdays !== '*') { // Weekly
+          parsedSchedule = { scheduleType: 'weekly', time, weekdays: weekdays.split(',') };
+        } else if (time.includes(':')) { // Daily
+          parsedSchedule = { scheduleType: 'daily', time };
+        } else { // Once
+          parsedSchedule = { scheduleType: 'once', onceDatetime: existingRule.schedule };
+        }
+      }
+      const initialDeviceIds = (existingRule.target_devices || []).map(d => String(d.id));
+      reset({ ...defaultValues, ...existingRule, ...parsedSchedule, target_device_ids: initialDeviceIds });
+    } else {
+      reset(defaultValues);
+    }
+  }, [isEditing, existingRule, reset]);
 
   const { fields: condFields, append: addCondition, remove: removeCondition } = useFieldArray({ control, name: 'conditions' });
   const { fields: actFields, append: addAction, remove: removeAction } = useFieldArray({ control, name: 'actions' });
 
-  const onSubmit = (data) => {
-    switch(data.scheduleType) {
-      case 'once': data.schedule = data.onceDatetime; break;
-      case 'interval': data.schedule = `*/${data.intervalValue} ${data.intervalUnit}`; break;
-      case 'daily': data.schedule = `${data.time} * * *`; break;
-      case 'weekly': data.schedule = `${data.time} * * ${data.weekdays.join(',')}`; break;
-      default: data.schedule = '';
+  const [filterText, setFilterText] = useState('');
+  const filteredDeviceList = deviceList.filter(d => d.name.toLowerCase().includes(filterText.toLowerCase()));
+  const [showAllDevices, setShowAllDevices] = useState(false);
+  const SHOW_COUNT = 5;
+  const visibleDevices = showAllDevices ? filteredDeviceList : filteredDeviceList.slice(0, SHOW_COUNT);
+
+  const inputBg = useColorModeValue('white', 'gray.700');
+  const borderColor = useColorModeValue('gray.300', 'gray.600');
+
+  // Get current local time in YYYY-MM-DDTHH:mm format for the datetime-local input
+  const now = new Date();
+  const offset = now.getTimezoneOffset();
+  const minDatetimeLocal = new Date(now.getTime() - (offset*60*1000)).toISOString().slice(0, 16);
+
+  const handleFormSubmit = async (data) => {
+    if (!data.target_device_ids || data.target_device_ids.length === 0) {
+      setError('target_device_ids', { type: 'manual', message: 'Select at least one device' });
+      return;
     }
-    data.target_device_ids = data.target_device_ids || [];
-    // only include conditions if any defined
+
+    if (data.rule_type === 'schedule') {
+      switch(data.scheduleType) {
+        case 'once': data.schedule = data.onceDatetime; break;
+        case 'interval': data.schedule = `*/${data.intervalValue} ${data.intervalUnit}`; break;
+        case 'daily': data.schedule = `${data.time} * * *`; break;
+        case 'weekly': data.schedule = `${data.time} * * ${data.weekdays.join(',')}`; break;
+        default: data.schedule = '';
+      }
+    }
+
     if (data.conditions && data.conditions.length > 0) {
       data.conditions = { operator: 'AND', conditions: data.conditions };
     } else {
       delete data.conditions;
     }
-    // normalize actions: map command to action and add recipients/channels for notifications
+
     data.actions = data.actions.map(a => {
       if (a.type === 'control_device') {
         const cmd = a.parameters.command || a.parameters.action;
         return { ...a, parameters: { action: cmd } };
       }
       if (a.type === 'notification') {
-        return { ...a, parameters: { message: a.parameters.message, recipients: data.target_device_ids, channels: ['in_app'] } };
+        return { ...a, parameters: { message: a.parameters.message, recipients: data.target_device_ids, channels: ['in_app', 'email'] } };
       }
       return a;
     });
-    if (initialData && onUpdate) onUpdate(data);
-    else onCreate(data);
-    onClose();
+
+    try {
+      await onSubmit(data);
+      toast({ title: 'Notifications sent', status: 'success', duration: 3000 });
+    } catch (err) {
+      toast({ title: 'Error creating rule', description: err.message, status: 'error', duration: 5000 });
+    } finally {
+      onClose();
+    }
   };
 
-  const [devices, setDevices] = useState([]);
-  useEffect(() => { getDevices().then(res => setDevices(res)); }, []);
-
-  const [filterText, setFilterText] = useState('');
-  const selectedIds = watch('target_device_ids') || [];
-  const filteredDevices = devices.filter(d => d.name.toLowerCase().includes(filterText.toLowerCase()));
-
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="xl">
-      <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>{initialData ? 'Edit Rule' : 'Create New Rule'}</ModalHeader>
+    <Modal isOpen={isOpen} onClose={onClose} size="3xl" motionPreset="slideInBottom">
+      <ModalOverlay bg="blackAlpha.500" />
+      <ModalContent bg={useColorModeValue('gray.50', 'gray.800')} borderRadius="xl">
+        <ModalHeader borderBottomWidth="1px" borderColor={useColorModeValue('gray.200', 'gray.700')}>
+          {isEditing ? 'Edit Rule' : 'Create New Rule'}
+        </ModalHeader>
         <ModalCloseButton />
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <ModalBody>
-            <Stack spacing={4}>
-              <FormControl isRequired>
-                <FormLabel>Name</FormLabel>
-                <Input {...register('name', { required: true })} />
-              </FormControl>
-              <FormControl>
-                <FormLabel>Description</FormLabel>
-                <Input {...register('description')} />
-              </FormControl>
-              <FormControl>
-                <FormLabel>Type</FormLabel>
-                <Select {...register('rule_type')}>
-                  <option value="condition">Condition</option>
-                  <option value="schedule">Schedule</option>
-                </Select>
-              </FormControl>
-              <FormControl display="flex" alignItems="center">
-                <FormLabel mb="0">Enabled</FormLabel>
-                <Switch {...register('is_enabled')} />
-              </FormControl>
-              <FormControl>
-                <FormLabel>Priority</FormLabel>
-                <Input type="number" {...register('priority')} />
-              </FormControl>
-              <FormControl>
-                <FormLabel>Schedule</FormLabel>
-                <RadioGroup {...register('scheduleType')}>
-                  <HStack spacing={4} mt={2}>
-                    <Radio value="once">One-time</Radio>
-                    <Radio value="interval">Interval</Radio>
-                    <Radio value="daily">Daily</Radio>
-                    <Radio value="weekly">Weekly</Radio>
-                  </HStack>
-                </RadioGroup>
-                {watch('scheduleType') === 'once' && (
-                  <>
-                    <Input
-                      type="datetime-local"
-                      {...register('onceDatetime', { validate: v => v && new Date(v) > new Date() || 'Select future date' })}
-                      mt={2}
-                      min={minDatetimeLocal}
-                    />
-                    {errors.onceDatetime && <FormErrorMessage>{errors.onceDatetime.message}</FormErrorMessage>}
-                  </>
-                )}
-                {watch('scheduleType') === 'interval' && (
-                  <HStack mt={2} spacing={2}>
-                    <Input
-                      type="number"
-                      placeholder="Every"
-                      {...register('intervalValue', { valueAsNumber: true, min: 1 })}
-                    />
-                    <Select {...register('intervalUnit')}>
-                      <option value="minutes">Minutes</option>
-                      <option value="hours">Hours</option>
-                      <option value="days">Days</option>
+        <form onSubmit={handleSubmit(handleFormSubmit)} noValidate>
+          <ModalBody p={6}>
+            <VStack spacing={6} align="stretch">
+              <FormSection title="Rule Details">
+                <SimpleGrid columns={2} spacing={4}>
+                  <FormControl isRequired isInvalid={errors.name}>
+                    <FormLabel>Name</FormLabel>
+                    <Input {...register('name', { required: 'Name is required' })} bg={inputBg} borderColor={borderColor} />
+                    <FormErrorMessage>{errors.name?.message}</FormErrorMessage>
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel>Description</FormLabel>
+                    <Input {...register('description')} bg={inputBg} borderColor={borderColor} />
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel>Type</FormLabel>
+                    <Select {...register('rule_type')} bg={inputBg} borderColor={borderColor}>
+                      <option value="condition">Condition-based</option>
+                      <option value="schedule">Scheduled</option>
                     </Select>
-                  </HStack>
-                )}
-                {watch('scheduleType') === 'daily' && (
-                  <Input type="time" {...register('time')} mt={2}/>
-                )}
-                {watch('scheduleType') === 'weekly' && (
-                  <Stack mt={2} spacing={2}>
-                    <Input type="time" {...register('time')} />
-                    <CheckboxGroup {...register('weekdays')}>
-                      {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day,i) => (
-                        <Checkbox key={day} value={i.toString()}>{day}</Checkbox>
-                      ))}
-                    </CheckboxGroup>
-                  </Stack>
-                )}
-              </FormControl>
-              <FormControl>
-                <FormLabel>Target Devices</FormLabel>
-                <Input placeholder="Search devices..." value={filterText} onChange={e => setFilterText(e.target.value)} mb={2} />
-                <Checkbox
-                  isChecked={selectedIds.length === devices.length}
-                  isIndeterminate={selectedIds.length > 0 && selectedIds.length < devices.length}
-                  onChange={() => setValue('target_device_ids', selectedIds.length === devices.length ? [] : devices.map(d => d.hash_id))}
-                  mb={2}
-                >
-                  Select All
-                </Checkbox>
-                <CheckboxGroup
-                  value={selectedIds}
-                  onChange={vals => setValue('target_device_ids', vals)}
-                >
-                  <Box maxH="200px" overflowY="auto" border="1px solid" borderColor="gray.200" borderRadius="md" p={2}>
-                    {filteredDevices.map(dev => (
-                      <Checkbox key={dev.hash_id} value={dev.hash_id} mb={1}>
-                        {dev.name}
-                      </Checkbox>
-                    ))}
-                  </Box>
-                </CheckboxGroup>
-              </FormControl>
-              <Box>
-                <FormLabel>Conditions</FormLabel>
-                {condFields.map((item, index) => (
-                  <Stack direction="row" key={item.id} spacing={2} align="center">
-                    <Select {...register(`conditions.${index}.type`)}>
-                      <option value="device_property">Device Property</option>
-                      <option value="sensor">Sensor</option>
-                    </Select>
-                    <Input placeholder="Property or Sensor" {...register(`conditions.${index}.property`)} />
-                    <Select {...register(`conditions.${index}.operator`)}>
-                      <option value="equals">Equals</option>
-                      <option value="gt">Greater Than</option>
-                      <option value="lt">Less Than</option>
-                    </Select>
-                    <Input placeholder="Value" {...register(`conditions.${index}.value`)} />
-                    <IconButton icon={<FiTrash />} size="sm" onClick={() => removeCondition(index)} />
-                  </Stack>
-                ))}
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel>Priority</FormLabel>
+                    <Input type="number" {...register('priority')} bg={inputBg} borderColor={borderColor} />
+                  </FormControl>
+                </SimpleGrid>
+                <FormControl display="flex" alignItems="center">
+                  <FormLabel htmlFor="is_enabled" mb="0">Enabled</FormLabel>
+                  <Switch id="is_enabled" {...register('is_enabled')} />
+                </FormControl>
+              </FormSection>
+
+              {watch('rule_type') === 'schedule' && (
+                <FormSection title="Schedule Configuration">
+                  <FormControl as="fieldset">
+                    <FormLabel as="legend">Schedule Type</FormLabel>
+                    <RadioGroup onChange={(val) => setValue('scheduleType', val)} value={watch('scheduleType')}>
+                      <HStack spacing={5}>
+                        <Radio value="once">One-time</Radio>
+                        <Radio value="interval">Interval</Radio>
+                        <Radio value="daily">Daily</Radio>
+                        <Radio value="weekly">Weekly</Radio>
+                      </HStack>
+                    </RadioGroup>
+                  </FormControl>
+
+                  {watch('scheduleType') === 'once' && (
+                    <FormControl isInvalid={errors.onceDatetime} isRequired>
+                      <FormLabel>Date and Time</FormLabel>
+                      <Input
+                        type="datetime-local"
+                        {...register('onceDatetime', {
+                          validate: v => {
+                            const rt = watch('rule_type');
+                            const st = watch('scheduleType');
+                            if (rt !== 'schedule' || st !== 'once') return true;
+                            if (!v) return 'Date is required';
+                            return new Date(v) > new Date() || 'Select a future date';
+                          }
+                        })}
+                        min={minDatetimeLocal}
+                        bg={inputBg}
+                        borderColor={borderColor}
+                      />
+                      <FormErrorMessage>{errors.onceDatetime?.message}</FormErrorMessage>
+                    </FormControl>
+                  )}
+
+                  {watch('scheduleType') === 'interval' && (
+                    <HStack spacing={2} align="end">
+                      <FormControl isRequired>
+                        <FormLabel>Every</FormLabel>
+                        <Input
+                          type="number"
+                          placeholder="e.g., 15"
+                          {...register('intervalValue', { required: true, valueAsNumber: true, min: 1 })}
+                          bg={inputBg}
+                          borderColor={borderColor}
+                        />
+                      </FormControl>
+                      <FormControl isRequired>
+                        <FormLabel>Unit</FormLabel>
+                        <Select {...register('intervalUnit')} bg={inputBg} borderColor={borderColor}>
+                          <option value="minutes">Minutes</option>
+                          <option value="hours">Hours</option>
+                          <option value="days">Days</option>
+                        </Select>
+                      </FormControl>
+                    </HStack>
+                  )}
+
+                  {watch('scheduleType') === 'daily' && (
+                    <FormControl isRequired>
+                      <FormLabel>Time of Day</FormLabel>
+                      <Input type="time" {...register('time', { required: true })} bg={inputBg} borderColor={borderColor} />
+                    </FormControl>
+                  )}
+
+                  {watch('scheduleType') === 'weekly' && (
+                    <VStack spacing={4} align="stretch">
+                      <FormControl isRequired>
+                        <FormLabel>Time of Day</FormLabel>
+                        <Input type="time" {...register('time', { required: true })} bg={inputBg} borderColor={borderColor} />
+                      </FormControl>
+                      <FormControl isRequired>
+                        <FormLabel>On these days</FormLabel>
+                        <CheckboxGroup onChange={(val) => setValue('weekdays', val)} value={watch('weekdays') || []}>
+                          <SimpleGrid columns={{base: 2, md: 4, lg: 7}} spacing={2}>
+                            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, i) => (
+                              <Checkbox key={day} value={i.toString()}>{day}</Checkbox>
+                            ))}
+                          </SimpleGrid>
+                        </CheckboxGroup>
+                      </FormControl>
+                    </VStack>
+                  )}
+                </FormSection>
+              )}
+
+              <FormSection title="Target Devices">
+                <Input 
+                  placeholder="Search devices..." 
+                  value={filterText} 
+                  onChange={e => setFilterText(e.target.value)} 
+                  mb={2} 
+                  bg={inputBg}
+                  borderColor={borderColor}
+                />
+                <Controller
+                  name="target_device_ids"
+                  control={control}
+                  defaultValue={[]}
+                  rules={{ validate: (val) => (val && val.length > 0) || 'Select at least one device' }}
+                  render={({ field }) => (
+                    <FormControl isInvalid={!!errors.target_device_ids}>
+                      <FormLabel>Target Devices</FormLabel>
+                      <Text fontSize="sm" mb={2}>{(field.value || []).length} selected</Text>
+                      <CheckboxGroup value={field.value || []} onChange={(val) => field.onChange(Array.isArray(val) ? val : [val])}>
+                        <Box maxH="200px" overflowY="auto" border="1px solid" borderColor={borderColor} borderRadius="md" p={2}>
+                          {visibleDevices.map(dev => (
+                            <Checkbox key={dev.id} value={dev.id} borderColor={borderColor}>
+                              {dev.name}
+                            </Checkbox>
+                          ))}
+                        </Box>
+                      </CheckboxGroup>
+                      {filteredDeviceList.length > SHOW_COUNT && (
+                        <Button size="sm" variant="link" mt={2} onClick={() => setShowAllDevices(prev => !prev)}>
+                          {showAllDevices ? 'Show Less' : `Show ${filteredDeviceList.length - SHOW_COUNT} more`}
+                        </Button>
+                      )}
+                      <FormErrorMessage>{errors.target_device_ids?.message}</FormErrorMessage>
+                    </FormControl>
+                  )}
+                />
+              </FormSection>
+
+              <FormSection title="Conditions">
+                <VStack spacing={3} align="stretch">
+                  {condFields.map((item, index) => (
+                    <HStack key={item.id} spacing={2}>
+                      <Select {...register(`conditions.${index}.type`)} bg={inputBg} borderColor={borderColor} flex={1.5}>
+                        <option value="device_property">Device Property</option>
+                        <option value="sensor">Sensor Reading</option>
+                      </Select>
+                      <Input placeholder="Property/Sensor ID" {...register(`conditions.${index}.property`)} bg={inputBg} borderColor={borderColor} flex={1.5} />
+                      <Select {...register(`conditions.${index}.operator`)} bg={inputBg} borderColor={borderColor} flex={1}>
+                        <option value="equals">==</option>
+                        <option value="gt">&gt;</option>
+                        <option value="lt">&lt;</option>
+                      </Select>
+                      <Input placeholder="Value" {...register(`conditions.${index}.value`)} bg={inputBg} borderColor={borderColor} flex={1} />
+                      <IconButton icon={<FiTrash />} aria-label="Remove Condition" onClick={() => removeCondition(index)} />
+                    </HStack>
+                  ))}
+                </VStack>
                 <Button leftIcon={<FiPlus />} size="sm" mt={2} onClick={() => addCondition({ type: 'device_property', property: '', operator: 'equals', value: '' })}>
                   Add Condition
                 </Button>
-              </Box>
-              <Box>
-                <FormLabel>Actions</FormLabel>
-                {actFields.map((item, index) => {
-                  const actionType = watch(`actions.${index}.type`);
-                  return (
-                    <Stack direction="row" key={item.id} spacing={2} align="center">
-                      <Select {...register(`actions.${index}.type`)}>
+              </FormSection>
+
+              <FormSection title="Actions">
+                <VStack spacing={3} align="stretch">
+                  {actFields.map((item, index) => (
+                    <HStack key={item.id} spacing={2}>
+                      <Select {...register(`actions.${index}.type`)} bg={inputBg} borderColor={borderColor} flex={1.5}>
                         <option value="control_device">Control Device</option>
-                        <option value="set_status">Set Status</option>
-                        <option value="notification">Notification</option>
+                        <option value="notification">Send Notification</option>
                       </Select>
-                      {actionType === 'control_device' && (
-                        <Select {...register(`actions.${index}.parameters.action`)}>
+                      {watch(`actions.${index}.type`) === 'control_device' ? (
+                        <Select {...register(`actions.${index}.parameters.action`)} bg={inputBg} borderColor={borderColor} flex={2}>
                           <option value="turn_on">Turn On</option>
                           <option value="turn_off">Turn Off</option>
-                          <option value="reboot">Reboot</option>
                         </Select>
+                      ) : (
+                        <Input placeholder="Message" {...register(`actions.${index}.parameters.message`)} bg={inputBg} borderColor={borderColor} flex={2} />
                       )}
-                      {actionType === 'set_status' && (
-                        <Select {...register(`actions.${index}.parameters.status`)}>
-                          <option value="active">Active</option>
-                          <option value="inactive">Inactive</option>
-                          <option value="maintenance">Maintenance</option>
-                        </Select>
-                      )}
-                      {actionType === 'notification' && (
-                        <Input placeholder="Notification message" {...register(`actions.${index}.parameters.message`)} />
-                      )}
-                      <IconButton icon={<FiTrash />} size="sm" onClick={() => removeAction(index)} />
-                    </Stack>
-                  );
-                })}
+                      <IconButton icon={<FiTrash />} aria-label="Remove Action" onClick={() => removeAction(index)} />
+                    </HStack>
+                  ))}
+                </VStack>
                 <Button leftIcon={<FiPlus />} size="sm" mt={2} onClick={() => addAction({ type: 'control_device', parameters: { action: 'turn_on' } })}>
                   Add Action
                 </Button>
-              </Box>
-            </Stack>
+              </FormSection>
+            </VStack>
           </ModalBody>
-          <ModalFooter>
-            <Button colorScheme="blue" mr={3} type="submit" disabled={!isValid}>
-              {initialData ? 'Save Changes' : 'Create Rule'}
+          <ModalFooter borderTopWidth="1px" borderColor={useColorModeValue('gray.200', 'gray.700')}>
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button colorScheme="blue" ml={3} type="submit">
+              {isEditing ? 'Save Changes' : 'Create Rule'}
             </Button>
-            <Button variant="ghost" onClick={onClose} type="button">Cancel</Button>
           </ModalFooter>
         </form>
       </ModalContent>

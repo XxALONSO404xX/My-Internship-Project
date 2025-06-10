@@ -2,11 +2,15 @@
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Body
 from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 
 from app.models.database import get_db
 from app.services.rule_service import RuleService
+from app.services.messaging_service import NotificationService
 from app.api.schemas import RuleCreate, RuleUpdate, RuleResponse, RuleEvaluationResponse, RuleData
 from app.api.deps import get_current_client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -47,6 +51,24 @@ async def create_rule(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result["message"]
         )
+    
+    # Dispatch creation notifications via WebSocket and Email
+    try:
+        notif = NotificationService(db)
+        await notif.create_notification(
+            title=f"Rule '{result['data']['name']}' Created",
+            content=result['message'],
+            notification_type='info',
+            source='rule',
+            source_id=result['data']['id'],
+            target_type='rule',
+            target_id=result['data']['id'],
+            target_name=result['data']['name'],
+            channels=['websocket','email'],
+            recipients=[current_user.email]
+        )
+    except Exception as e:
+        logger.error(f"Failed to send creation notification: {str(e)}")
     
     return RuleResponse(
         status=result["status"],

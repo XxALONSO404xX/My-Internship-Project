@@ -3,7 +3,6 @@ import { getDevices } from '../services/device-service.js';
 import {
   startVulnerabilityScan,
   getVulnerabilityScanResults,
-  getDeviceVulnerabilityHistory,
   remediateVulnerability,
   bulkRemediateVulnerabilities
 } from '../services/security-service.js';
@@ -35,6 +34,7 @@ import {
   Stat,
   StatLabel,
   StatNumber,
+  StatHelpText,
   Drawer,
   DrawerOverlay,
   DrawerContent,
@@ -42,9 +42,24 @@ import {
   DrawerBody,
   DrawerFooter,
   useDisclosure,
-  IconButton
+  IconButton,
+  Flex,
+  Fade
 } from '@chakra-ui/react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { 
+  PieChart, 
+  Pie, 
+  Cell, 
+  ResponsiveContainer, 
+  Tooltip, 
+  Legend, 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis,
+  RadialBarChart,
+  RadialBar
+} from 'recharts';
 import { InfoOutlineIcon } from '@chakra-ui/icons';
 import DeviceSelector from '../components/DeviceSelector';
 import FullScreenLoader from '../components/FullScreenLoader';
@@ -73,12 +88,12 @@ export default function SecurityPage() {
   const [showFirmwareModal, setShowFirmwareModal] = useState(false);
   const [compatibleFw, setCompatibleFw] = useState([]);
   const [updatingFw, setUpdatingFw] = useState(false);
-  const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedVulnerability, setSelectedVulnerability] = useState(null);
   const { isOpen: isDrawerOpen, onOpen: openDrawer, onClose: closeDrawer } = useDisclosure();
 
-  // Card background adapts to color mode
+  // Theme-driven styling
   const cardBg = useColorModeValue('white', 'gray.800');
+  const accentColor = useColorModeValue('blue.500', 'blue.300');
 
   useEffect(() => {
     async function fetchAllDevices() {
@@ -91,24 +106,6 @@ export default function SecurityPage() {
     }
     fetchAllDevices();
   }, []);
-
-  // Fetch vulnerability history when device changes
-  useEffect(() => {
-    if (!selectedDeviceId) return;
-    async function loadHistory() {
-      setLoadingHistory(true);
-      try {
-        const res = await getDeviceVulnerabilityHistory(selectedDeviceId);
-        if (res.status !== 'success') throw new Error(res.error || 'History fetch failed');
-        setScanResult({ ...res, vulnerabilities: res.history || [] });
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoadingHistory(false);
-      }
-    }
-    loadHistory();
-  }, [selectedDeviceId]);
 
   const handleScan = async () => {
     if (!selectedDeviceId) {
@@ -215,6 +212,17 @@ export default function SecurityPage() {
     }
   };
 
+  // Compute severity distribution
+  const severityCounts = scanResult?.vulnerabilities.reduce((acc,v) => { acc[v.severity] = (acc[v.severity]||0)+1; return acc; }, {}) || {};
+  const totalVulns = scanResult?.vulnerabilities.length || 0;
+
+  // Compute and style risk gauge
+  const riskScore = scanResult?.result?.risk_score || 0;
+  const gaugeValue = Math.min(Math.max(riskScore * 10, 0), 100);
+  const gaugeColor = riskScore > 7 ? useColorModeValue('red.500','red.300')
+                    : riskScore > 4 ? useColorModeValue('orange.500','orange.300')
+                    : useColorModeValue('green.500','green.300');
+
   return (
     <Box p={8}>
       <FullScreenLoader isOpen={scanning} message="Scanning vulnerabilities..." />
@@ -256,50 +264,42 @@ export default function SecurityPage() {
 
       {/* Vulnerability summary and chart */}
       {scanResult && (
-        <Box mb={6}>
-          {/* Severity counts */}
-          <SimpleGrid columns={{ base: 2, md: 5 }} spacing={4} mb={4}>
-            {['critical','high','medium','low'].map((level) => (
-              <Stat key={level} bg={cardBg} p={4} borderRadius="md" boxShadow="sm">
-                <StatLabel>{level.charAt(0).toUpperCase() + level.slice(1)}</StatLabel>
-                <StatNumber>{scanResult.vulnerabilities.filter(v => v.severity.toLowerCase() === level).length}</StatNumber>
+        <Fade in>
+          {/* Risk gauge */}
+          <HStack justify="center" spacing={8} mb={6}>
+            <Box bg={cardBg} p={4} borderRadius="md" shadow="md" width="150px">
+              <Text textAlign="center" mb={2}>Risk Score</Text>
+              <RadialBarChart width={120} height={120} cx="50%" cy="50%" innerRadius="80%" outerRadius="100%" barSize={10} data={[{ name:'', value: gaugeValue }]} startAngle={180} endAngle={0}>
+                <RadialBar background minAngle={15} clockWise dataKey="value" fill={gaugeColor} />
+              </RadialBarChart>
+              <Text textAlign="center" mt={2} fontWeight="bold">{riskScore.toFixed(1)}/10</Text>
+            </Box>
+          </HStack>
+          <SimpleGrid columns={{ base:1, md:4 }} spacing={6} mb={6}>
+            {['critical','high','medium','low'].map(sev => (
+              <Stat key={sev} bg={cardBg} borderLeftWidth={4} borderLeftColor={`${severityColorScheme(sev)}.500`} p={4} borderRadius="md" shadow="md">
+                <StatLabel textTransform="capitalize">{sev}</StatLabel>
+                <StatNumber>{severityCounts[sev] || 0}</StatNumber>
+                <StatHelpText>{totalVulns ? `${((severityCounts[sev]||0)/totalVulns*100).toFixed(0)}%` : '0%'}</StatHelpText>
               </Stat>
             ))}
-            <Stat key="riskScore" bg={cardBg} p={4} borderRadius="md" boxShadow="sm">
-              <StatLabel>Risk Score</StatLabel>
-              <StatNumber>{scanResult.result?.risk_score ?? '-'}</StatNumber>
-            </Stat>
           </SimpleGrid>
-          <Text color="gray.500" mb={4}>{scanResult.result?.scan_summary}</Text>
-          {/* Severity distribution pie chart */}
-          <Box bg={cardBg} p={4} borderRadius="md" boxShadow="sm" height="300px">
+          <Box bg={cardBg} p={4} borderRadius="md" shadow="md" mb={6} height="200px">
             <Text mb={2}>Severity Distribution</Text>
-            <ResponsiveContainer width="100%" height="90%">
-              <PieChart>
-                <Pie
-                  data={[
-                    { name: 'Critical', value: scanResult.vulnerabilities.filter(v => v.severity.toLowerCase() === 'critical').length },
-                    { name: 'High', value: scanResult.vulnerabilities.filter(v => v.severity.toLowerCase() === 'high').length },
-                    { name: 'Medium', value: scanResult.vulnerabilities.filter(v => v.severity.toLowerCase() === 'medium').length },
-                    { name: 'Low', value: scanResult.vulnerabilities.filter(v => v.severity.toLowerCase() === 'low').length }
-                  ]}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={80}
-                  label
-                >
-                  {['#e53e3e','#dd6b20','#d69e2e','#38a169'].map((color, i) => (
-                    <Cell key={i} fill={color} />
-                  ))}
-                </Pie>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={Object.entries(severityCounts).map(([sev,count])=>({ sev, count }))}>
+                <XAxis dataKey="sev" />
+                <YAxis />
                 <Tooltip />
-                <Legend verticalAlign="bottom" height={36} />
-              </PieChart>
+                <Bar dataKey="count" fill={accentColor}>
+                  {Object.entries(severityCounts).map(([sev],i) => (
+                    <Cell key={sev} fill={useColorModeValue(`${severityColorScheme(sev)}.500`, `${severityColorScheme(sev)}.300`)} />
+                  ))}
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           </Box>
-        </Box>
+        </Fade>
       )}
 
       {/* Placeholder when no scan results */}

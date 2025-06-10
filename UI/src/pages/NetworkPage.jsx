@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Heading, SimpleGrid, Stat, StatLabel, StatNumber, StatHelpText, Text, Spinner, Flex, VStack, HStack, useColorModeValue, Table, Thead, Tbody, Tr, Th, Td } from '@chakra-ui/react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { Box, Heading, SimpleGrid, Stat, StatLabel, StatNumber, StatHelpText, StatIcon, Text, Spinner, Flex, VStack, HStack, useColorModeValue, Table, Thead, Tbody, Tr, Th, Td } from '@chakra-ui/react';
+import { FiAlertTriangle, FiAlertCircle, FiUsers } from 'react-icons/fi';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Legend, ResponsiveContainer, BarChart, Bar, AreaChart, Area } from 'recharts';
 import { getNetworkSecuritySummary, getNetworkTopologyData, getNetworkTrafficStats } from '../services/network-service';
 
 export default function NetworkPage() {
@@ -34,6 +35,15 @@ export default function NetworkPage() {
   }, []);
 
   const cardBg = useColorModeValue('white', 'gray.700');
+  const lineColor = useColorModeValue('#8884d8', '#82ca9d');
+  const gridColor = useColorModeValue('rgba(0,0,0,0.1)', 'rgba(255,255,255,0.1)');
+  const pieColors = [
+    useColorModeValue('#0088FE','#0056b3'),
+    useColorModeValue('#00C49F','#007f6f'),
+    useColorModeValue('#FFBB28','#b38f21'),
+    useColorModeValue('#FF8042','#b35c21')
+  ];
+
   if (loading) {
     return <Flex justify="center" p={8}><Spinner size="lg" /></Flex>;
   }
@@ -54,17 +64,20 @@ export default function NetworkPage() {
     <Box p={8}>
       <Heading mb={4}>Network Security Overview</Heading>
       <SimpleGrid columns={{ base:1, md:3 }} spacing={6} mb={6}>
-        <Stat bg={cardBg} p={4} shadow="md" borderRadius="lg">
+        <Stat bg={cardBg} borderLeftWidth={4} borderLeftColor="red.500" p={4} shadow="md" borderRadius="lg">
+          <StatIcon as={FiAlertTriangle} boxSize={6} color="red.500" mb={2} />
           <StatLabel>Intrusion Attempts</StatLabel>
           <StatNumber>{totalPackets}</StatNumber>
           <StatHelpText>Last 24h</StatHelpText>
         </Stat>
-        <Stat bg={cardBg} p={4} shadow="md" borderRadius="lg">
+        <Stat bg={cardBg} borderLeftWidth={4} borderLeftColor="orange.500" p={4} shadow="md" borderRadius="lg">
+          <StatIcon as={FiAlertCircle} boxSize={6} color="orange.500" mb={2} />
           <StatLabel>Traffic Anomalies</StatLabel>
           <StatNumber>{anomalousRate}%</StatNumber>
           <StatHelpText>Anomaly Rate</StatHelpText>
         </Stat>
-        <Stat bg={cardBg} p={4} shadow="md" borderRadius="lg">
+        <Stat bg={cardBg} borderLeftWidth={4} borderLeftColor="green.500" p={4} shadow="md" borderRadius="lg">
+          <StatIcon as={FiUsers} boxSize={6} color="green.500" mb={2} />
           <StatLabel>Connected Nodes</StatLabel>
           <StatNumber>{deviceCount}</StatNumber>
           <StatHelpText>Online</StatHelpText>
@@ -75,24 +88,49 @@ export default function NetworkPage() {
         <Box bg={cardBg} p={4} shadow="md" borderRadius="lg" height="300px">
           <Text mb={2}>Traffic Over Time</Text>
           <ResponsiveContainer width="100%" height="90%">
-            <LineChart data={series}>
-              <CartesianGrid strokeDasharray="3 3" />
+            <AreaChart data={series} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="trafficGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={lineColor} stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor={lineColor} stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
               <XAxis dataKey="timestamp" tickFormatter={str => str.split('T')[1].slice(0,5)} />
               <YAxis />
               <Tooltip />
-              <Line type="monotone" dataKey="volume" stroke="#8884d8" dot={false} />
-            </LineChart>
+              <Area type="monotone" dataKey="volume" stroke={lineColor} fill="url(#trafficGradient)" dot={false} />
+            </AreaChart>
           </ResponsiveContainer>
         </Box>
         <Box bg={cardBg} p={4} shadow="md" borderRadius="lg" height="300px">
           <Text mb={2}>Protocol Distribution</Text>
           <ResponsiveContainer width="100%" height="90%">
             <PieChart>
-              <Pie data={Object.entries(protocolDist).map(([name,value])=>({ name,value }))} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
-                {Object.keys(protocolDist).map((key,i)=>(<Cell key={key} fill={['#0088FE','#00C49F','#FFBB28','#FF8042'][i%4]} />))}
+              <Pie
+                data={Object.entries(protocolDist).map(([name,value])=>({ name, value }))}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={80}
+                paddingAngle={2}
+                startAngle={90}
+                endAngle={-270}
+                stroke="#fff"
+                strokeWidth={2}
+                isAnimationActive={true}
+                animationBegin={300}
+                animationDuration={800}
+                labelLine={false}
+                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                {Object.keys(protocolDist).map((key,i) => (
+                  <Cell key={key} fill={pieColors[i % pieColors.length]} />
+                ))}
               </Pie>
-              <Legend />
-              <Tooltip />
+              <Legend verticalAlign="bottom" height={36} />
+              <Tooltip formatter={(value,name) => [`${value}`, name]} />
             </PieChart>
           </ResponsiveContainer>
         </Box>

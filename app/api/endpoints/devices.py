@@ -442,7 +442,7 @@ async def simulate_device_snapshot(
         logger.error(f"Error taking snapshot from device {device_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/simulate/status-update")
+@router.post("/{device_id}/simulate/status-update")
 async def simulate_device_status_update(
     device_id: str,
     status: str = Query(..., enum=["online", "offline", "error"]),
@@ -463,7 +463,7 @@ async def simulate_device_status_update(
         # Update device status
         await device_service.update_device(
             device_id=device_id,
-            device_data={"status": status, "last_seen": datetime.utcnow()}
+            device_data={"is_online": status == "online", "last_seen": datetime.utcnow()}
         )
         
         return {
@@ -475,41 +475,6 @@ async def simulate_device_status_update(
         
     except Exception as e:
         logger.error(f"Error simulating device status update: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/simulate/metrics")
-async def simulate_device_metrics(
-    device_id: str,
-    metrics: Dict[str, Any],
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Simulate device metrics update
-    
-    This endpoint is used for testing and simulation purposes to update device metrics
-    """
-    try:
-        device_service = DeviceService(db)
-        device = await device_service.get_device_by_id(device_id)
-        
-        if not device:
-            raise HTTPException(status_code=404, detail=f"Device with ID {device_id} not found")
-            
-        # Update device metrics
-        await device_service.update_device_metrics(
-            device_id=device_id,
-            metrics=metrics
-        )
-        
-        return {
-            "success": True,
-            "device_id": device_id,
-            "metrics": metrics,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error simulating device metrics: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Vulnerability Management Endpoints
