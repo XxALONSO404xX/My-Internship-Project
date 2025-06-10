@@ -333,7 +333,7 @@ async def get_sensors_summary(
 
 @router.get("/{device_id}/history")
 async def get_device_history(
-    device_id: int,
+    device_id: str,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
     current_user: Client = Depends(get_current_client)
@@ -350,7 +350,7 @@ async def get_device_history(
 
 @router.get("/{device_id}/activities", response_model=None)
 async def get_device_activities(
-    device_id: int,
+    device_id: str,
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db)
 ):
@@ -390,7 +390,7 @@ async def get_device_activities(
 
 @router.post("/{device_id}/snapshot", response_model=None)
 async def simulate_device_snapshot(
-    device_id: int,
+    device_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
@@ -444,7 +444,7 @@ async def simulate_device_snapshot(
 
 @router.post("/simulate/status-update")
 async def simulate_device_status_update(
-    device_id: int,
+    device_id: str,
     status: str = Query(..., enum=["online", "offline", "error"]),
     db: AsyncSession = Depends(get_db)
 ):
@@ -479,7 +479,7 @@ async def simulate_device_status_update(
 
 @router.post("/simulate/metrics")
 async def simulate_device_metrics(
-    device_id: int,
+    device_id: str,
     metrics: Dict[str, Any],
     db: AsyncSession = Depends(get_db)
 ):
@@ -697,7 +697,7 @@ async def get_device_vulnerabilities(
 
 @router.get("/{device_id}/sensors/latest", response_model=Dict[str, Any])
 async def get_latest_device_readings(
-    device_id: int,
+    device_id: str,
     db: AsyncSession = Depends(get_db)
 ):
     """Get latest readings for each sensor type"""

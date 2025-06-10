@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box, Flex, Text, Badge, Button, Progress, Icon, HStack, VStack, Heading,
   useColorModeValue, Collapse, Tooltip, useDisclosure
 } from '@chakra-ui/react';
 import { 
-  FiPower, FiActivity, FiWifi, FiShield, FiRefreshCw, 
-  FiChevronDown, FiChevronUp, FiAlertCircle, FiInfo
+  FiPower, FiActivity, FiWifi, FiShield, FiRefreshCw,
+  FiChevronDown, FiChevronUp, FiAlertCircle, FiInfo,
+  FiThermometer, FiDroplet, FiBattery, FiZap, FiLock
 } from 'react-icons/fi';
 import { motion } from 'framer-motion';
-import { scanDevice } from '../services/device-service';
+import { scanDevice, getLatestReadings, simulateDeviceMetrics, getVulnerabilityScanResults } from '../services/device-service';
 import { useToast } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router-dom';
 
@@ -32,35 +33,150 @@ export default function DeviceCard({
 
   const toast = useToast();
   const [scanning, setScanning] = useState(false);
+  const [sensorReadings, setSensorReadings] = useState(null);
+  const [fetchingReadings, setFetchingReadings] = useState(false);
+  const [vulnerabilities, setVulnerabilities] = useState(null);
+  const [lastScan, setLastScan] = useState(device.last_scan);
+  // Removed automatic vulnerability loading; vulnerabilities fetched only after manual scan
 
-  const handleScan = async (e) => {
-    e.stopPropagation();
-    setScanning(true);
-    try {
-      const result = await scanDevice(device.hash_id);
-      {
-        const success = result.status === 'started' || result.status === 'success';
+  // Fetch initial metrics for header summary
+  useEffect(() => {
+    const fetchSummaryMetrics = async () => {
+      try {
+        let data = await getLatestReadings(device.hash_id);
+        // Auto-generate metrics if none exist
+        if (!data || Object.entries(data).filter(([t]) => t !== 'status').length === 0) {
+          await simulateDeviceMetrics(device.hash_id);
+          data = await getLatestReadings(device.hash_id);
+        }
+        setSensorReadings(data);
+      } catch (err) {
+        console.error('Error fetching initial metrics:', err);
+      }
+    };
+    fetchSummaryMetrics();
+  }, [device.hash_id]);
+
+  // Icon and label mappings for dynamic sensor metrics
+  const metricsIcons = {
+    temperature: FiThermometer,
+    humidity: FiDroplet,
+    battery_level: FiBattery,
+    power_usage: FiZap,
+    motion: FiActivity,
+    light_level: FiActivity,
+    lock_state: FiLock
+  };
+  const metricLabels = {
+    temperature: 'Temp',
+    humidity: 'Humidity',
+    battery_level: 'Battery',
+    power_usage: 'Power',
+    motion: 'Motion',
+    light_level: 'Light',
+    lock_state: 'Lock'
+  };
+  metricsIcons.status = FiInfo;
+  metricLabels.status = 'Status';
+  const getMetricColor = (type) => {
+    switch(type) {
+      case 'temperature': return 'red.400';
+      case 'humidity': return 'blue.400';
+      case 'battery_level': return 'green.400';
+      case 'power_usage': return 'yellow.400';
+      case 'motion': return 'purple.400';
+      case 'light_level': return 'orange.400';
+      case 'lock_state': return 'teal.400';
+      default: return 'gray.400';
+    }
+  };
+
+  useEffect(() => {
+    let intervalId;
+    const fetchMetrics = async () => {
+      setFetchingReadings(true);
+      try {
+        const data = await getLatestReadings(device.hash_id);
+        setSensorReadings(data);
+      } catch (err) {
+        console.error('Error fetching sensor readings:', err);
         toast({
-          title: success ? 'Scan initiated' : 'Scan failed',
-          description: success ? '' : (result.error || result.message || ''),
-          status: success ? 'success' : 'error',
+          title: 'Error loading metrics',
+          description: err.message,
+          status: 'error',
           duration: 3000,
           isClosable: true
         });
+      } finally {
+        setFetchingReadings(false);
+      }
+    };
+    if (isExpanded) {
+      fetchMetrics();
+      intervalId = setInterval(fetchMetrics, 60000);
+    }
+    return () => clearInterval(intervalId);
+  }, [isExpanded]);
+
+  // Sleep helper for polling
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const handleScan = async (e) => {
+    e.stopPropagation();
+    setScanning(true);
+    setVulnerabilities(null);
+    try {
+      const result = await scanDevice(device.hash_id);
+      const scanId = result.scan_id;
+      toast({ title: 'Scan initiated', status: 'info', duration: 3000, isClosable: true });
+      let pollRes;
+      do {
+        await sleep(2000);
+        pollRes = await getVulnerabilityScanResults(scanId);
+      } while (pollRes.status === 'in_progress');
+      if (pollRes.status === 'error') {
+        toast({ title: 'Scan failed', description: pollRes.error || 'Unknown error', status: 'error', duration: 3000, isClosable: true });
+        setVulnerabilities([]);
+      } else {
+        setVulnerabilities(pollRes.vulnerabilities || []);
+        const nowStr = new Date().toLocaleString();
+        setLastScan(nowStr);
+        toast({ title: 'Scan completed', status: 'success', description: `Scan completed at ${nowStr}`, duration: 3000, isClosable: true });
       }
     } catch (err) {
       console.error('Error scanning device:', err);
+      toast({ title: 'Scan error', description: err.message, status: 'error', duration: 3000, isClosable: true });
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleGenerateMetrics = async (e) => {
+    e.stopPropagation();
+    setFetchingReadings(true);
+    try {
+      await simulateDeviceMetrics(device.hash_id);
+      const data = await getLatestReadings(device.hash_id);
+      setSensorReadings(data);
+    } catch (err) {
+      console.error('Error simulating metrics:', err);
       toast({
-        title: 'Scan error',
+        title: 'Simulation error',
         description: err.message,
         status: 'error',
         duration: 3000,
         isClosable: true
       });
     } finally {
-      setScanning(false);
+      setFetchingReadings(false);
     }
   };
+
+  // Reset vulnerabilities on collapse
+  useEffect(() => {
+    if (!isExpanded) {
+      setVulnerabilities(null);
+    }
+  }, [isExpanded]);
 
   return (
     <motion.div
@@ -93,6 +209,34 @@ export default function DeviceCard({
                 {device.type}
               </Badge>
             </HStack>
+            {/* Device metadata */}
+            {(device.manufacturer || device.model) && (
+              <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.400')}>
+                {device.manufacturer}{device.model ? ` ${device.model}` : ''}
+              </Text>
+            )}
+            {device.firmware_version && (
+              <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.400')}>
+                {`v${device.firmware_version}`}
+              </Text>
+            )}
+            {sensorReadings && Object.entries(sensorReadings).filter(([t]) => t !== 'status').length > 0 && (
+              <HStack spacing={4} mt={1}>
+                {Object.entries(sensorReadings)
+                  .filter(([t]) => t !== 'status')
+                  .map(([type, reading]) => {
+                    const IconComp = metricsIcons[type] || FiInfo;
+                    return (
+                      <HStack key={type} spacing={1}>
+                        <Icon as={IconComp} color={getMetricColor(type)} boxSize={4} />
+                        <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.400')}>
+                          {`${reading.value}${reading.unit}`}
+                        </Text>
+                      </HStack>
+                    );
+                  })}
+              </HStack>
+            )}
           </VStack>
           
           <HStack spacing={3}>
@@ -145,29 +289,72 @@ export default function DeviceCard({
               </HStack>
               
               <Badge colorScheme="blue" variant="subtle">
-                {device.last_scan || 'Never scanned'}
+                {lastScan || 'Never scanned'}
               </Badge>
             </HStack>
             
-            {/* Health Metrics */}
-            <Box>
-              <HStack mb={2}>
-                <Icon as={FiActivity} color="blue.400" />
-                <Text fontSize="sm">Operational: {device.health_score || 95}%</Text>
-              </HStack>
-              <Progress 
-                value={device.health_score || 95} 
-                size="sm" 
-                borderRadius="full"
-                colorScheme={device.health_score > 85 ? 'green' : device.health_score > 60 ? 'orange' : 'red'}
-                sx={{
-                  '> div': {
-                    transition: 'all 0.5s ease'
-                  }
-                }}
-              />
-            </Box>
+            {/* Show vulnerabilities only after scan completes; otherwise health */}
+            {vulnerabilities !== null && vulnerabilities.length > 0 ? (
+              <Box>
+                <HStack mb={2} spacing={2}>
+                  <Icon as={FiAlertCircle} color="red.400" />
+                  <Text fontSize="sm" color="red.500">
+                    {vulnerabilities.length} Vulnerabilities
+                  </Text>
+                </HStack>
+              </Box>
+            ) : (
+              <Box>
+                <HStack mb={2}>
+                  <Icon as={FiActivity} color="blue.400" />
+                  <Text fontSize="sm">Operational: {device.health_score || 95}%</Text>
+                </HStack>
+                <Progress 
+                  value={device.health_score || 95} 
+                  size="sm"
+                  borderRadius="full"
+                  colorScheme={device.health_score > 85 ? 'green' : device.health_score > 60 ? 'orange' : 'red'}
+                  sx={{ '> div': { transition: 'all 0.5s ease' } }}
+                />
+              </Box>
+            )}
             
+            {/* Sensor Metrics */}
+            {fetchingReadings ? (
+              <Text fontSize="sm">Loading metrics...</Text>
+            ) : sensorReadings ? (
+              <Box>
+                <HStack mb={2} spacing={4}>
+                  {(() => {
+                    const entries = Object.entries(sensorReadings);
+                    const filtered = entries.filter(([t]) => t !== 'status' || entries.length === 1);
+                    return filtered.map(([type, reading]) => {
+                      const IconComp = metricsIcons[type] || FiInfo;
+                      if (type === 'status') {
+                        return (
+                          <HStack key={type} spacing={1}>
+                            <Icon as={IconComp} color={reading.value === 1 ? 'green.400' : 'red.400'} />
+                            <Text fontSize="sm">{`Status: ${reading.value === 1 ? 'OK' : 'Error'}`}</Text>
+                          </HStack>
+                        );
+                      }
+                      const label = metricLabels[type] || type.replace(/_/g, ' ');
+                      return (
+                        <HStack key={type} spacing={1}>
+                          <Icon as={IconComp} color={getMetricColor(type)} />
+                          <Text fontSize="sm">{`${label}: ${reading.value}${reading.unit}`}</Text>
+                        </HStack>
+                      );
+                    });
+                  })()}
+                </HStack>
+              </Box>
+            ) : (
+              <Button size="sm" variant="outline" onClick={handleGenerateMetrics} mt={2}>
+                Generate Metrics
+              </Button>
+            )}
+
             {/* Action Buttons */}
             <HStack spacing={3} mt={2}>
               <Button 
@@ -190,7 +377,7 @@ export default function DeviceCard({
                 flex={1}
                 isLoading={scanning}
               >
-                Scan
+                Scan Vulnerabilities
               </Button>
             </HStack>
           </VStack>

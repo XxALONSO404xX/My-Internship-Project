@@ -388,6 +388,18 @@ class VulnerabilityService:
                 vulnerabilities=vulnerabilities
             )
             
+            # Log alert activity for vulnerability scan completion
+            critical_count = sum(1 for v in vulnerabilities if v.get("severity") == "CRITICAL")
+            await self.activity_service.log_alert(
+                action="vulnerability_scan_completed",
+                description=f"Vulnerability scan completed for device {device.hash_id}: found {len(vulnerabilities)} vulnerabilities",
+                severity="critical" if critical_count > 0 else ("warning" if vulnerabilities else "info"),
+                target_type="device",
+                target_id=device.hash_id,
+                target_name=device.name,
+                metadata={"scan_id": scan_id, "vulnerability_count": len(vulnerabilities), "critical_count": critical_count}
+            )
+            
             logger.info(f"Vulnerability scan {scan_id} completed with {len(vulnerabilities)} findings")
         except Exception as e:
             logger.error(f"Error during vulnerability scan simulation: {str(e)}", exc_info=True)
