@@ -600,20 +600,18 @@ async def initialize_device_vulnerabilities(db: AsyncSession) -> None:
             logger.warning("No devices found to initialize vulnerabilities")
             return
         
-        # Check if vulnerability manager has already been initialized
-        # If vulnerabilities exist, we don't need to reinitialize
-        if vulnerability_manager.vulnerability_state.get("devices") and len(vulnerability_manager.vulnerability_state.get("devices", {})) > 0:
-            logger.info("Vulnerabilities already initialized, skipping")
+        # Determine which devices still need initial vulnerabilities
+        existing_devices = set(vulnerability_manager.vulnerability_state.get("devices", {}).keys())
+        devices_without_vulns = [d for d in devices if d.hash_id not in existing_devices]
+        
+        if not devices_without_vulns:
+            logger.info("All devices already have vulnerabilities – skipping injector")
             return
         
-        # Select 3-6 random devices to inject vulnerabilities into
-        num_vulnerable_devices = random.randint(3, min(6, len(devices)))
-        vulnerable_devices = random.sample(devices, num_vulnerable_devices)
-        
-        logger.info(f"Initializing vulnerabilities for {num_vulnerable_devices} random devices")
+        logger.info(f"Initializing vulnerabilities for {len(devices_without_vulns)} devices without existing vulnerabilities")
         
         # For each selected device, inject 1-3 vulnerabilities
-        for device in vulnerable_devices:
+        for device in devices_without_vulns:
             # Select 1-3 random vulnerabilities for this device
             num_vulnerabilities = random.randint(1, 3)
             selected_vulnerabilities = random.sample(INJECTABLE_VULNERABILITIES, num_vulnerabilities)
@@ -634,7 +632,7 @@ async def initialize_device_vulnerabilities(db: AsyncSession) -> None:
                 
                 logger.info(f"Injected vulnerability {vuln_copy['id']} ({vuln_copy['name']}) into device {device.name}")
         
-        # Save the vulnerability state to persistent storage
+        # Persist the state after bulk injections
         vulnerability_manager.save_state()
         
         logger.info("Vulnerability initialization completed successfully")

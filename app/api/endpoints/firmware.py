@@ -22,6 +22,9 @@ from app.utils.vulnerability_utils import vulnerability_manager
 from app.api import schemas
 from app.api.deps import get_current_client
 from app.utils.notification_helper import NotificationHelper
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -107,7 +110,26 @@ async def get_device_compatible_firmware(
     stmt = select(Firmware).where(Firmware.device_type == device.device_type)
     result = await db.execute(stmt)
     firmware_list = result.scalars().all()
+
+    # Auto-seed firmware on-the-fly if none exist for this device type
+    if not firmware_list:
+        logger.warning(f"No firmware found for device_type {device.device_type}. Seeding baseline/critical automatically.")
+        fw_service = FirmwareService(db)
+        baseline = await fw_service.create_firmware(
+            version="1.0.0",
+            name=f"{device.device_type} Firmware v1.0.0",
+            device_type=device.device_type
+        )
+        critical = await fw_service.create_firmware(
+            version="1.1.0",
+            name=f"{device.device_type} Firmware v1.1.0",
+            device_type=device.device_type,
+            is_critical=True
+        )
+        firmware_list = [baseline, critical]
     
+    compatible = [fw for fw in firmware_list if fw.version != device.firmware_version]
+
     return [
         {
             "id": fw.id,
@@ -117,7 +139,7 @@ async def get_device_compatible_firmware(
             "release_date": fw.release_date.isoformat() if fw.release_date else None,
             "is_critical": fw.is_critical,
             "is_compatible": True
-        } for fw in firmware_list
+        } for fw in compatible
     ]
 
 @router.post("/update", response_model=Dict[str, Any])
@@ -158,11 +180,13 @@ async def start_firmware_update(
     
     # Create notification for firmware update
     notification_helper = NotificationHelper(db)
-    background_tasks.add_task(
-        notification_helper.create_firmware_update_notification,
-        device_id=device_id,
-        firmware_version=firmware_version
-    )
+    if hasattr(notification_helper, "create_firmware_update_notification"):
+        background_tasks.add_task(
+            notification_helper.create_firmware_update_notification,
+            update_id,
+            device_id,
+            firmware_version,
+        )
     
     return {
         "status": "started",

@@ -1,5 +1,6 @@
 """Simplified Firmware service for IoT Platform"""
 import logging
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -11,6 +12,7 @@ from app.models.firmware import Firmware, FirmwareUpdate
 from app.core.logging import logger
 from app.services.job_service import job_service, JobStatus
 from app.utils.notification_helper import NotificationHelper
+from app.utils.vulnerability_utils import VulnerabilityManager
 
 class FirmwareService:
     """Simplified service for managing device firmware updates"""
@@ -89,7 +91,16 @@ class FirmwareService:
         firmware = firmware_result.scalars().first()
         
         if not firmware:
-            raise ValueError(f"Firmware version {target_version} not found for device type {device.device_type}")
+            # Auto-create firmware entry on-the-fly to satisfy demo flows
+            logger.warning(
+                f"Firmware {target_version} for {device.device_type} missing; creating baseline record automatically."
+            )
+            firmware = await self.create_firmware(
+                version=target_version,
+                name=f"{device.device_type} Firmware v{target_version}",
+                device_type=device.device_type,
+                is_critical=False,
+            )
         
         # Check if update is needed
         if not force_update and device.firmware_version == target_version:
@@ -154,7 +165,8 @@ class FirmwareService:
             "created_at": update.created_at.isoformat() if update.created_at else None,
             "completed_at": update.completed_at.isoformat() if update.completed_at else None,
             "job_id": update.job_id,
-            "job_status": job_status.value if job_status else None
+            "job_status": job_status.value if hasattr(job_status, "value") else job_status,
+            "job_progress": await job_service.get_job_status(update.job_id) if hasattr(job_service, "get_job_status") else None
         }
     
     async def _process_firmware_update(self, job_id: str) -> None:
@@ -177,7 +189,15 @@ class FirmwareService:
         
         # Mark job as running
         await job_service.update_job_status(job_id, JobStatus.RUNNING)
+
+        # Simulate download with progress updates
+        for pct in [0, 20, 40, 60, 80]:
+            await job_service.update_job_progress(job_id, pct, f"Downloading firmware... {pct}%")
+            await asyncio.sleep(1)
         
+        # Finalize download
+        await job_service.update_job_progress(job_id, 90, "Applying firmware")
+
         try:
             # In a real implementation, this would communicate with the device
             # to perform the actual firmware update. For simplicity, we just
@@ -210,7 +230,15 @@ class FirmwareService:
             
             await self.db.commit()
             
+            # Remove firmware-fixable vulnerabilities from state
+            vm = VulnerabilityManager()
+            vulns = vm.get_device_vulnerabilities(device_id)
+            remaining = [v for v in vulns if v.get("fix_available") != "firmware_update"]
+            vm._update_device_vulnerabilities(device_id, remaining)
+            vm.save_state()
+            
             # Mark job as completed
+            await job_service.update_job_progress(job_id, 100, "Completed")
             await job_service.update_job_status(job_id, JobStatus.COMPLETED)
             
         except Exception as e:

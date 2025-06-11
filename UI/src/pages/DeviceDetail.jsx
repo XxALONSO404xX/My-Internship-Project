@@ -18,9 +18,11 @@ import {
   Tr, 
   Th, 
   Td, 
-  IconButton 
+  IconButton,
+  Collapse
 } from '@chakra-ui/react';
 import { FiRefreshCw } from 'react-icons/fi';
+import FirmwareProgress from '../components/FirmwareProgress';
 
 export default function DeviceDetail() {
   const { id: deviceId } = useParams();
@@ -175,7 +177,15 @@ export default function DeviceDetail() {
                 ))}
               </Tbody>
             </Table>
-            {updateStatus && (<Text mt='2'>Status: {updateStatus.status}</Text>)}
+            {updateStatus && (
+              (updateStatus.status === 'started' || updateStatus.status === 'in_progress') ? (
+                <Collapse in={true} animateOpacity>
+                  <FirmwareProgress key={updateStatus.version} progress={updateStatus.job_progress?.progress ?? undefined} />
+                </Collapse>
+              ) : (
+                <Text mt='2'>Status: {updateStatus.status}</Text>
+              )
+            )}
           </Stack>
         )}
       </Box>

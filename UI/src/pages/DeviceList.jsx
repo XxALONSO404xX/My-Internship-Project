@@ -298,7 +298,7 @@ export default function DeviceList() {
         <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
           <Box>
             <VStack align="start" spacing={0}>
-              <Heading as="h1" size="lg">Device Fleet</Heading>
+              <Heading as="h1" size="lg" bgGradient="linear(to-r, purple.600, blue.500)" bgClip="text">Devices</Heading>
               <Text color={useColorModeValue('gray.500', 'gray.400')}>
                 An overview of your connected devices.
               </Text>

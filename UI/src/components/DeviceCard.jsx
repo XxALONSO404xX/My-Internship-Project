@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box, Flex, Text, Button, Icon, HStack, VStack, Heading, useColorModeValue, Collapse, Tooltip, IconButton, Skeleton, useToast, Divider
 } from '@chakra-ui/react';
@@ -84,6 +84,11 @@ export default function DeviceCard({ device, isExpanded, onToggleExpand, onToggl
   const securityStatus = vulnerabilityCount > 0 ? `${vulnerabilityCount} issues` : 'Secure';
   const securityColor = vulnerabilityCount > 0 ? 'orange.400' : 'green.400';
 
+  const glow = useMemo(() => {
+    if (vulnerabilityCount > 0) return '0 0 12px rgba(255,165,0,0.6)';
+    return device.is_online ? '0 0 12px rgba(72,187,120,0.6)' : 'none';
+  }, [vulnerabilityCount, device.is_online]);
+
   const renderMetrics = () => {
     if (fetchingReadings) {
       return (
@@ -132,55 +137,52 @@ export default function DeviceCard({ device, isExpanded, onToggleExpand, onToggl
   };
 
   return (
-    <motion.div layout transition={{ duration: 0.3, type: 'spring' }}>
-      <Box
-        bg={cardBg}
-        borderWidth="1px"
-        borderColor={isExpanded ? 'primary.500' : borderColor}
-        borderRadius="xl"
-        p={5}
-        w="100%"
-        maxW="400px"
-        boxShadow={isExpanded ? 'lg' : 'md'}
-        transition="all 0.2s ease-in-out"
-        onClick={onToggleExpand}
-        cursor="pointer"
-        _hover={{ transform: 'translateY(-2px)', shadow: 'lg' }}
-      >
-        <VStack spacing={4} align="stretch">
-          <Flex justify="space-between" align="center">
-            <HStack spacing={3}>
-              <Box w={3} h={3} borderRadius="full" bg={statusColor} />
-              <Heading size="md" noOfLines={1}>{device.name}</Heading>
-            </HStack>
-            <IconButton 
-              icon={isExpanded ? <FiChevronUp /> : <FiChevronDown />}
-              variant="ghost"
-              size="sm"
-              aria-label="Toggle Details"
-            />
-          </Flex>
-
-          <HStack justify="space-between" color={subtleTextColor} fontSize="sm">
-            <HStack><Icon as={FiWifi} mr={1} /><Text>{device.ip_address}</Text></HStack>
-            <HStack><Icon as={FiInfo} mr={1} /><Text>FW: {device.firmware_version}</Text></HStack>
-            <HStack><Icon as={FiShield} color={securityColor} mr={1} /><Text color={securityColor}>{securityStatus}</Text></HStack>
-          </HStack>
-
-          <Collapse in={isExpanded} animateOpacity>
-            <Divider my={4} />
-            <VStack spacing={5} align="stretch">
-              <Box>
-                <Heading size="sm" mb={4} textAlign="center">Live Metrics</Heading>
-                {renderMetrics()}
-              </Box>
-              <HStack justify="space-between">
-                <Button size="sm" variant="outline" isLoading={scanning} onClick={handleScan}>Scan Vulnerabilities</Button>
-                <Button size="sm" colorScheme={device.is_online ? 'red' : 'green'} onClick={handlePowerClick}>{device.is_online ? 'Power Off' : 'Power On'}</Button>
+    <motion.div layout whileHover={{ y: -4, rotateX: 2, rotateY: -2 }} transition={{ type: 'spring', stiffness: 200, damping: 15 }}>
+      <Box bgGradient="linear(to-br, gray.600 0%, gray.900 100%)" p="1px" borderRadius="2xl" boxShadow={glow} onClick={onToggleExpand} cursor="pointer">
+        <Box
+          bg={cardBg}
+          borderRadius="2xl"
+          p={5}
+          w="100%"
+          maxW="400px"
+          boxShadow={isExpanded ? 'dark-lg' : 'md'}
+          transition="all 0.2s ease-in-out"
+        >
+          <VStack spacing={4} align="stretch">
+            <Flex justify="space-between" align="center">
+              <HStack spacing={3}>
+                <Box w={3} h={3} borderRadius="full" bg={statusColor} />
+                <Heading size="md" noOfLines={1}>{device.name}</Heading>
               </HStack>
-            </VStack>
-          </Collapse>
-        </VStack>
+              <IconButton 
+                icon={isExpanded ? <FiChevronUp /> : <FiChevronDown />}
+                variant="ghost"
+                size="sm"
+                aria-label="Toggle Details"
+              />
+            </Flex>
+
+            <HStack justify="space-between" color={subtleTextColor} fontSize="sm">
+              <HStack><Icon as={FiWifi} mr={1} /><Text>{device.ip_address}</Text></HStack>
+              <HStack><Icon as={FiInfo} mr={1} /><Text>FW: {device.firmware_version}</Text></HStack>
+              <HStack><Icon as={FiShield} color={securityColor} mr={1} /><Text color={securityColor}>{securityStatus}</Text></HStack>
+            </HStack>
+
+            <Collapse in={isExpanded} animateOpacity>
+              <Divider my={4} />
+              <VStack spacing={5} align="stretch">
+                <Box>
+                  <Heading size="sm" mb={4} textAlign="center">Live Metrics</Heading>
+                  {renderMetrics()}
+                </Box>
+                <HStack justify="space-between">
+                  <Button size="sm" variant="outline" isLoading={scanning} onClick={handleScan}>Scan Vulnerabilities</Button>
+                  <Button size="sm" colorScheme={device.is_online ? 'red' : 'green'} onClick={handlePowerClick}>{device.is_online ? 'Power Off' : 'Power On'}</Button>
+                </HStack>
+              </VStack>
+            </Collapse>
+          </VStack>
+        </Box>
       </Box>
     </motion.div>
   );

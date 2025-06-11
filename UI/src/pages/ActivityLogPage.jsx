@@ -4,10 +4,11 @@ import {
   Box, Flex, Heading, Button, Input, HStack, VStack,
   TableContainer, Table, Thead, Tbody, Tr, Th, Td,
   Spinner, Text, useColorModeValue, Badge, Tooltip,
-  useBreakpointValue, Icon, Tag, TagLabel, Code
+  useBreakpointValue, Icon, ButtonGroup, SlideFade, Tag, TagLabel, Code
 } from '@chakra-ui/react';
 import { useLocation, useParams } from 'react-router-dom';
-import { FiDownload, FiCalendar } from 'react-icons/fi';
+import { FiDownload, FiCalendar, FiList, FiActivity } from 'react-icons/fi';
+import { AiOutlineAlert, AiOutlineInfoCircle, AiOutlineCheckCircle } from 'react-icons/ai';
 import { getActivitiesInRange, searchActivities } from '../services/activity-service';
 
 export default function ActivityLogPage() {
@@ -19,6 +20,7 @@ export default function ActivityLogPage() {
   const [activities, setActivities] = useState([]);
   const [startDate, setStartDate] = useState(new Date(Date.now() - 7*24*60*60*1000).toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [viewMode, setViewMode] = useState('table'); // 'table' | 'timeline'
 
   const bg = useColorModeValue('white', 'gray.800');
   const cardBg = useColorModeValue('white', 'gray.700');
@@ -107,7 +109,7 @@ export default function ActivityLogPage() {
           bg={useColorModeValue('gray.50', 'gray.900')}
         >
           <VStack align="flex-start" spacing={1}>
-            <Heading size="lg">{showAlerts ? 'Activity Alerts' : 'Activity Log'}</Heading>
+            <Heading size="lg" bgGradient="linear(to-r, purple.600, blue.500)" bgClip="text" mb={4}>{showAlerts ? 'Activity Alerts' : 'Activity Log'}</Heading>
             {targetType && targetId && (
               <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.400')}>
                 Showing activities for {targetType} {targetId}
@@ -136,14 +138,25 @@ export default function ActivityLogPage() {
               </HStack>
             </HStack>
           </VStack>
-          <Button 
-            leftIcon={<FiDownload />} 
-            size="md"
-            onClick={exportCSV}
-            px={6}
-          >
-            Export CSV
-          </Button>
+          <HStack spacing={3}>
+            <ButtonGroup isAttached variant="outline" size="sm">
+              <Button leftIcon={<FiList />} isActive={viewMode==='table'} onClick={()=>setViewMode('table')}>
+                Table
+              </Button>
+              <Button leftIcon={<FiActivity />} isActive={viewMode==='timeline'} onClick={()=>setViewMode('timeline')}>
+                Timeline
+              </Button>
+            </ButtonGroup>
+
+            <Button 
+              leftIcon={<FiDownload />} 
+              size="md"
+              onClick={exportCSV}
+              px={6}
+            >
+              Export CSV
+            </Button>
+          </HStack>
         </Flex>
 
         {/* Loading State */}
@@ -167,8 +180,8 @@ export default function ActivityLogPage() {
           </Text>
         )}
 
-        {/* Activity Table */}
-        {displayedActivities.length > 0 && (
+        {/* Activity Content */}
+        {displayedActivities.length > 0 && viewMode==='table' && (
           <TableContainer p={2}>
             <Table variant="simple" size="lg">
               <Thead>
@@ -275,6 +288,62 @@ export default function ActivityLogPage() {
               </Tbody>
             </Table>
           </TableContainer>
+        )}
+
+        {/* Timeline view */}
+        {displayedActivities.length > 0 && viewMode==='timeline' && (
+          <Box maxH="70vh" overflowY="auto" px={6} py={4}>
+            <VStack align="stretch" spacing={6} position="relative">
+              {displayedActivities.map((activity, idx) => {
+                const colorMap = {
+                  alert: 'red',
+                  warning: 'orange',
+                  info: 'primary',
+                  success: 'green',
+                  user_action: 'purple',
+                  system_event: 'primary',
+                  state_change: 'teal'
+                };
+                const iconMap = {
+                  alert: AiOutlineAlert,
+                  warning: AiOutlineAlert,
+                  info: AiOutlineInfoCircle,
+                  success: AiOutlineCheckCircle
+                };
+                const color = colorMap[activity.activity_type] || 'gray';
+                const IconCmp = iconMap[activity.activity_type] || AiOutlineInfoCircle;
+
+                const isLast = idx === displayedActivities.length - 1;
+                return (
+                  <HStack key={activity.id} align="flex-start" spacing={4} position="relative">
+                    {/* vertical line */}
+                    {!isLast && (
+                      <Box position="absolute" top={6} left={3} w="2px" h="calc(100% - 6px)" bg={useColorModeValue('gray.200','gray.600')} />
+                    )}
+                    <Icon as={IconCmp} color={`${color}.400`} boxSize={5} mt={1} />
+                    <SlideFade in={true} offsetY={4} style={{ width:'100%' }}>
+                      <Box bg={cardBg} p={4} borderRadius="md" shadow="sm" _hover={{ shadow:'md' }}>
+                        <HStack justify="space-between">
+                          <Text fontWeight="medium">{activity.action?.replace(/_/g,' ')}</Text>
+                          <Text fontSize="sm" color={useColorModeValue('gray.500','gray.400')} whiteSpace="nowrap">
+                            {new Date(activity.timestamp).toLocaleString()}
+                          </Text>
+                        </HStack>
+                        <Text fontSize="sm" color={useColorModeValue('gray.600','gray.300')} mt={1}>
+                          {activity.description || 'No description'}
+                        </Text>
+                        {activity.target_name && (
+                          <Text fontSize="xs" color={useColorModeValue('gray.500','gray.400')} mt={1}>
+                            {activity.target_name} ({activity.target_type})
+                          </Text>
+                        )}
+                      </Box>
+                    </SlideFade>
+                  </HStack>
+                );
+              })}
+            </VStack>
+          </Box>
         )}
       </Box>
     </Box>

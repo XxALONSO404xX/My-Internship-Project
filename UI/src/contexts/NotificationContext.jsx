@@ -44,21 +44,24 @@ function processQueue() {
       return;
     }
     // Ignore rule-enabled notifications
-    if (msg.type === 'notification' && msg.data && msg.data.event_type === 'rule_enabled') {
-      return;
+    if (msg.type === 'notification' && msg.data) {
+      const et = msg.data.event_type;
+      // ignore rule_enabled & system notification_created spam
+      if (et === 'rule_enabled' || et === 'notification_created') return;
     }
     // Handle rule execution notifications with dedupe
     if (msg.type === 'notification' && msg.data && msg.data.event_type === 'rule_execution') {
       // Only show rule execution notifications on the Rules page
-      if (!window.location.pathname.includes('/rules')) {
-        return;
-      }
-      const key = msg.data.execution_id || msg.data.ruleId || msg.data.name;
-      if (globalThis.processedRuleExecSet.has(key)) return;
-      globalThis.processedRuleExecSet.add(key);
+      if (!window.location.pathname.includes('/rules')) return;
+      const executionId = msg.data.execution_id || msg.data.id;
+      if (globalThis.processedRuleExecSet.has(executionId)) return;
+      globalThis.processedRuleExecSet.add(executionId);
+      const ruleName = msg.data.ruleName || msg.data.rule_name || msg.data.name || 'Unnamed rule';
+      const result = msg.data.result || msg.data.outcome || '';
       scheduleToast(() => {
         globalThis.toast({
-          title: `Rule execution: ${msg.data.name}`,
+          title: `Rule executed: ${ruleName}`,
+          description: result ? `Result: ${result}` : undefined,
           status: 'info',
           duration: 4000,
           isClosable: true,
@@ -82,14 +85,15 @@ function processQueue() {
     }
     // Handle rule execution notifications
     if (msg.type === 'ruleExecuted' && msg.data) {
-      // Dedupe by execution key
-      const key = msg.data.id || msg.data.ruleId || msg.data.name;
-      if (globalThis.processedRuleExecSet.has(key)) return;
-      globalThis.processedRuleExecSet.add(key);
+      const executionId = msg.data.id;
+      if (globalThis.processedRuleExecSet.has(executionId)) return;
+      globalThis.processedRuleExecSet.add(executionId);
+      const ruleName = msg.data.ruleName || msg.data.rule_name || msg.data.name || 'Unnamed rule';
+      const result = msg.data.result || msg.data.outcome || '';
       scheduleToast(() => {
-        const ruleName = msg.data.ruleName || msg.data.name || msg.data.rule_name || 'Unnamed rule';
         globalThis.toast({
-          title: `Rule executed: ${ruleName} - ${msg.data.result}`,
+          title: `Rule executed: ${ruleName}`,
+          description: result ? `Result: ${result}` : undefined,
           status: 'info',
           duration: 4000,
           isClosable: true,
@@ -150,6 +154,8 @@ export function NotificationProvider({ children }) {
     }
 
     const handleOpen = () => {
+      // Clear any queued messages on reconnect to prevent spam
+      globalThis.messageQueue = [];
       setConnected(true);
     };
     const handleMessage = (event) => {

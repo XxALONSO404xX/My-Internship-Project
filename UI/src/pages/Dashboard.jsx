@@ -100,13 +100,14 @@ export default function Dashboard() {
   const [activitySummary, setActivitySummary] = useState({ total: 0, actions: 0 });
   const [trend, setTrend] = useState([]);
   const [startDate, setStartDate] = useState('2025-04-12');
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [endDate, setEndDate] = useState(todayStr);
   const [loading, setLoading] = useState(false);
 
   const [showWelcome, setShowWelcome] = useState(() => sessionStorage.getItem('welcomeShown') !== 'true');
 
   // Hoist hook calls out of JSX to preserve hook order
-  const boxBg = useColorModeValue('gray.50', 'gray.800');
+  const boxBg = useColorModeValue('gray.50', 'transparent');
   const h2Color = useColorModeValue('gray.700', 'white');
   const gridStroke = useColorModeValue('gray.200', 'gray.700');
   const areaStroke = useColorModeValue('purple.500', 'purple.300');
@@ -184,7 +185,7 @@ export default function Dashboard() {
     .map(d => d.date);
 
   return (
-    <Box p={{ base: 4, md: 8 }} bg={boxBg} minH="100vh">
+    <Box p={{ base: 4, md: 8 }} bg={boxBg} minH="100vh" boxShadow="none">
       <Flex justify="space-between" align="center" mb={8}>
         <VStack align="start">
           <Heading as="h1" size="xl" bgGradient={headingGradient} bgClip="text">Dashboard</Heading>
@@ -205,11 +206,28 @@ export default function Dashboard() {
           <HStack spacing={4} mt={{ base: 4, md: 0 }}>
             <HStack>
               <Icon as={FiCalendar} color={subtleText} />
-              <Input type="date" value={startDate} size="sm" max={endDate} onChange={e => setStartDate(e.target.value)} />
+              <Input
+                type="date"
+                value={startDate}
+                size="sm"
+                max={todayStr}
+                bg={useColorModeValue('white', 'gray.700')}
+                color={useColorModeValue('black', 'white')}
+                onChange={e => setStartDate(e.target.value)}
+              />
             </HStack>
             <HStack>
               <Icon as={FiCalendar} color={subtleText} />
-              <Input type="date" value={endDate} size="sm" min={startDate} max={new Date().toISOString().split('T')[0]} onChange={e => setEndDate(e.target.value)} />
+              <Input
+                type="date"
+                value={endDate}
+                size="sm"
+                min={startDate}
+                max={todayStr}
+                bg={useColorModeValue('white', 'gray.700')}
+                color={useColorModeValue('black', 'white')}
+                onChange={e => setEndDate(e.target.value)}
+              />
             </HStack>
             <Button size="sm" onClick={handleDateChange} colorScheme="blue">Update</Button>
           </HStack>

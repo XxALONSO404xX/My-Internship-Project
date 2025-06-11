@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Heading, SimpleGrid, Stat, StatLabel, StatNumber, StatHelpText, StatIcon, Text, Spinner, Flex, VStack, HStack, useColorModeValue, Table, Thead, Tbody, Tr, Th, Td } from '@chakra-ui/react';
-import { FiAlertTriangle, FiAlertCircle, FiUsers } from 'react-icons/fi';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, Heading, SimpleGrid, Stat, StatLabel, StatNumber, StatHelpText, Text, Spinner, Flex, VStack, HStack, Icon, useColorModeValue, Table, Thead, Tbody, Tr, Th, Td, Select, CircularProgress, CircularProgressLabel, IconButton, Skeleton, Stack } from '@chakra-ui/react';
+import { FiShield, FiWifiOff, FiUsers, FiTrendingUp, FiArrowUp, FiArrowDown } from 'react-icons/fi';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Legend, ResponsiveContainer, BarChart, Bar, AreaChart, Area } from 'recharts';
 import { getNetworkSecuritySummary, getNetworkTopologyData, getNetworkTrafficStats } from '../services/network-service';
 
@@ -9,14 +9,17 @@ export default function NetworkPage() {
   const [summary, setSummary] = useState(null);
   const [topology, setTopology] = useState(null);
   const [trafficStats, setTrafficStats] = useState(null);
+  const [timeRange, setTimeRange] = useState('24h'); // 1h,24h,7d
+  const [talkerSortAsc, setTalkerSortAsc] = useState(false);
 
   useEffect(() => {
+    const start = Date.now();
     async function fetchData() {
       try {
         const [sum, topo, tStats] = await Promise.all([
           getNetworkSecuritySummary(),
           getNetworkTopologyData(),
-          getNetworkTrafficStats('24h'),
+          getNetworkTrafficStats(timeRange),
         ]);
         setSummary(sum);
         setTopology(topo);
@@ -28,11 +31,17 @@ export default function NetworkPage() {
         setTopology({});
         setTrafficStats({});
       } finally {
-        setLoading(false);
+        const elapsed = Date.now() - start;
+        const remain = 10000 - elapsed; // 10s minimum
+        if (remain > 0) {
+          setTimeout(() => setLoading(false), remain);
+        } else {
+          setLoading(false);
+        }
       }
     }
     fetchData();
-  }, []);
+  }, [timeRange]);
 
   const cardBg = useColorModeValue('white', 'gray.700');
   const lineColor = useColorModeValue('#8884d8', '#82ca9d');
@@ -45,7 +54,22 @@ export default function NetworkPage() {
   ];
 
   if (loading) {
-    return <Flex justify="center" p={8}><Spinner size="lg" /></Flex>;
+    return (
+      <Box p={8}>
+        <Stack spacing={6}>
+          <Skeleton height="40px" borderRadius="md" />
+          <SimpleGrid columns={{base:1, md:3}} spacing={6}>
+            {Array.from({length:3}).map((_,i)=>(<Skeleton key={i} height="120px" borderRadius="lg" />))}
+          </SimpleGrid>
+          <SimpleGrid columns={{base:1, lg:2}} spacing={6}>
+            <Skeleton height="320px" borderRadius="lg" />
+            <Skeleton height="320px" borderRadius="lg" />
+          </SimpleGrid>
+          <Skeleton height="140px" borderRadius="lg" />
+          <Skeleton height="220px" borderRadius="lg" />
+        </Stack>
+      </Box>
+    );
   }
 
   const evt = summary?.events_summary ?? { total_last_24h: 0, high_severity: 0, medium_severity: 0, low_severity: 0 };
@@ -55,29 +79,46 @@ export default function NetworkPage() {
   const series = trafficStats?.traffic_series ?? [];
   const protocolDist = trafficStats?.protocol_distribution ?? {};
   const talkers = trafficStats?.top_talkers ?? [];
+  const sortedTalkers = [...talkers].sort((a,b)=>{
+    const valA = a.bandwidth_usage || 0;
+    const valB = b.bandwidth_usage || 0;
+    return talkerSortAsc ? valA - valB : valB - valA;
+  });
   const deviceCount = summary?.device_count ?? 0;
   const nodesArr = topology?.nodes ?? [];
   const edgesArr = topology?.edges ?? [];
+  const gateways = nodesArr.filter(n=>n.type==='gateway').length;
+  const sensors = nodesArr.filter(n=>n.type==='sensor').length;
   const lastUpdated = topology?.last_updated ?? '';
 
   return (
     <Box p={8}>
-      <Heading mb={4}>Network Security Overview</Heading>
+      <HStack mb={4} justify="space-between" flexWrap="wrap" gap={4}>
+        <Heading bgGradient="linear(to-r, teal.400, blue.500)" bgClip="text">Network Security Overview</Heading>
+        <Select size="sm" value={timeRange} onChange={(e)=>setTimeRange(e.target.value)} maxW="120px" bg={useColorModeValue('white','gray.700')}>
+          <option value="1h">Last 1h</option>
+          <option value="24h">Last 24h</option>
+          <option value="7d">Last 7d</option>
+        </Select>
+      </HStack>
       <SimpleGrid columns={{ base:1, md:3 }} spacing={6} mb={6}>
-        <Stat bg={cardBg} borderLeftWidth={4} borderLeftColor="red.500" p={4} shadow="md" borderRadius="lg">
-          <StatIcon as={FiAlertTriangle} boxSize={6} color="red.500" mb={2} />
-          <StatLabel>Intrusion Attempts</StatLabel>
-          <StatNumber>{totalPackets}</StatNumber>
-          <StatHelpText>Last 24h</StatHelpText>
+        <Stat bg={cardBg} borderLeftWidth={4} borderLeftColor="purple.500" p={4} shadow="md" borderRadius="lg">
+          <Icon as={FiShield} boxSize={6} color="purple.500" mb={2} />
+          <StatLabel>Security Events</StatLabel>
+          <HStack spacing={1} justify="center">
+            <StatNumber>{totalPackets}</StatNumber>
+          </HStack>
+          <StatHelpText fontSize="xs" color="gray.500" title={`High: ${evt.high_severity}, Medium: ${evt.medium_severity}, Low: ${evt.low_severity}`}>Last 24h</StatHelpText>
         </Stat>
-        <Stat bg={cardBg} borderLeftWidth={4} borderLeftColor="orange.500" p={4} shadow="md" borderRadius="lg">
-          <StatIcon as={FiAlertCircle} boxSize={6} color="orange.500" mb={2} />
-          <StatLabel>Traffic Anomalies</StatLabel>
-          <StatNumber>{anomalousRate}%</StatNumber>
-          <StatHelpText>Anomaly Rate</StatHelpText>
+        <Stat bg={cardBg} p={4} shadow="md" borderRadius="lg" textAlign="center">
+          <Text fontWeight="medium" mb={2}>Anomaly Rate</Text>
+          <CircularProgress value={anomalousRate} size="90px" color="orange.400" thickness="8px">
+            <CircularProgressLabel>{anomalousRate}%</CircularProgressLabel>
+          </CircularProgress>
+          <StatHelpText mt={1}>of traffic flagged</StatHelpText>
         </Stat>
         <Stat bg={cardBg} borderLeftWidth={4} borderLeftColor="green.500" p={4} shadow="md" borderRadius="lg">
-          <StatIcon as={FiUsers} boxSize={6} color="green.500" mb={2} />
+          <Icon as={FiUsers} boxSize={6} color="green.500" mb={2} />
           <StatLabel>Connected Nodes</StatLabel>
           <StatNumber>{deviceCount}</StatNumber>
           <StatHelpText>Online</StatHelpText>
@@ -136,19 +177,46 @@ export default function NetworkPage() {
         </Box>
       </SimpleGrid>
 
-      <Box bg={cardBg} p={4} shadow="md" borderRadius="lg" mb={6}>
-        <Text mb={2}>Network Topology</Text>
-        <Text>Nodes: {nodesArr.length}, Edges: {edgesArr.length}</Text>
-        <Text fontSize="sm" color="gray.500">Last updated: {lastUpdated}</Text>
+      <Box bgGradient="linear(to-r, teal.500, blue.500)" p={1} borderRadius="xl" mb={6}>
+        <Box bg={cardBg} p={4} borderRadius="xl">
+          <Text mb={2} fontWeight="medium">Network Topology Snapshot</Text>
+          <SimpleGrid columns={{base:2, md:4}} spacing={4} textAlign="center">
+            <Stat>
+              <StatLabel>Nodes</StatLabel>
+              <StatNumber>{nodesArr.length}</StatNumber>
+            </Stat>
+            <Stat>
+              <StatLabel>Edges</StatLabel>
+              <StatNumber>{edgesArr.length}</StatNumber>
+            </Stat>
+            <Stat>
+              <StatLabel>Gateways</StatLabel>
+              <StatNumber>{gateways}</StatNumber>
+            </Stat>
+            <Stat>
+              <StatLabel>Sensors</StatLabel>
+              <StatNumber>{sensors}</StatNumber>
+            </Stat>
+          </SimpleGrid>
+          <Text fontSize="xs" mt={2} color="gray.500">Updated: {lastUpdated}</Text>
+        </Box>
       </Box>
 
       <Box bg={cardBg} p={4} shadow="md" borderRadius="lg">
-        <Text mb={2}>Top Talkers</Text>
+        <HStack mb={2} justify="space-between">
+          <Text>Top Talkers</Text>
+          <IconButton icon={talkerSortAsc? <FiArrowDown/>:<FiArrowUp/>} size="xs" aria-label="toggle sort" onClick={()=>setTalkerSortAsc(p=>!p)} />
+        </HStack>
         <Table size="sm">
           <Thead><Tr><Th>Device</Th><Th>Sent</Th><Th>Received</Th><Th>Bandwidth</Th></Tr></Thead>
           <Tbody>
-            {talkers.map(t=>(
-              <Tr key={t.device_id}><Td>{t.device_name}</Td><Td>{t.packets_sent}</Td><Td>{t.packets_received}</Td><Td>{t.bandwidth_usage}</Td></Tr>
+            {sortedTalkers.map(t=>(
+              <Tr key={t.device_id} _hover={{ bg: useColorModeValue('gray.50','gray.700') }}>
+                <Td>{t.device_name}</Td>
+                <Td>{t.packets_sent}</Td>
+                <Td>{t.packets_received}</Td>
+                <Td fontWeight="bold">{t.bandwidth_usage}</Td>
+              </Tr>
             ))}
           </Tbody>
         </Table>

@@ -29,7 +29,8 @@ class Job:
             job_type: str, 
             params: Dict[str, Any],
             owner_id: Optional[str] = None,
-            max_runtime: int = 3600
+            max_runtime: int = 3600,
+            metadata: Optional[Dict[str, Any]] = None,
         ):
         self.id = job_id
         self.job_type = job_type
@@ -43,7 +44,7 @@ class Job:
         self.started_at = datetime.utcnow().isoformat()
         self.completed_at = datetime.utcnow().isoformat()
         self.total_items = 1
-        self.metadata = {}
+        self.metadata = metadata or {}
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert job to dictionary"""
@@ -57,7 +58,8 @@ class Job:
             "created_at": self.created_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
-            "owner_id": self.owner_id
+            "owner_id": self.owner_id,
+            "metadata": self.metadata,
         }
     
     @classmethod
@@ -67,7 +69,8 @@ class Job:
             job_id=data["job_id"],
             job_type=data["job_type"],
             params={},
-            owner_id=data.get("owner_id")
+            owner_id=data.get("owner_id"),
+            metadata=data.get("metadata", {})
         )
         return job
 
@@ -122,20 +125,29 @@ class JobService:
         self.job_handlers[job_type] = handler
         return True
     
-    async def create_job(self, 
-                       job_type: str, 
-                       params: Dict[str, Any], 
-                       owner_id: Optional[str] = None,
-                       max_runtime: int = 3600,
-                       start_immediately: bool = True) -> str:
-        """Create a new job (stub)"""
+    async def create_job(
+        self,
+        job_type: str,
+        params: Optional[Dict[str, Any]] = None,
+        owner_id: Optional[str] = None,
+        max_runtime: int = 3600,
+        start_immediately: bool = True,
+        description: str | None = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Create a new job (stub).
+        Extra kwargs like description and metadata are accepted for compatibility and ignored."""
+        if params is None:
+            params = {}
+        # Store metadata separately
+        md = metadata or {}
         job_id = str(uuid.uuid4())
-        logger.info(f"Created job {job_id} of type {job_type} (stub implementation)")
-        
+        logger.info(
+            f"Created job {job_id} of type {job_type} (stub implementation). Description: {description}"
+        )
         # Create a completed job right away
-        job = Job(job_id, job_type, params, owner_id)
-        self.jobs[job_id] = job.to_dict()
-        
+        job = Job(job_id, job_type, params, owner_id, metadata=md)
+        self.jobs[job_id] = job
         return job_id
     
     async def start_job(self, job_id: str) -> bool:
@@ -145,6 +157,11 @@ class JobService:
     
     async def update_job_progress(self, job_id: str, progress: int, message: Optional[str] = None):
         """Update the progress of a job (stub)"""
+        job = self.jobs.get(job_id)
+        if isinstance(job, Job):
+            job.progress = progress
+            if message:
+                job.result["message"] = message
         logger.info(f"Updating job {job_id} progress to {progress} (stub implementation)")
         return True
     
@@ -156,7 +173,20 @@ class JobService:
     async def update_job_status(self, job_id: str, status: str):
         """Update job status (stub)"""
         logger.info(f"Updating job {job_id} status to {status} (stub implementation)")
+        job = self.jobs.get(job_id)
+        job.status = status if isinstance(job, Job) else status
         return True
+    
+    async def get_job_status(self, job_id: str) -> str:
+        """Return status of job (stub)"""
+        job = self.jobs.get(job_id)
+        if not job:
+            return JobStatus.COMPLETED
+        if isinstance(job, Job):
+            return job.status
+        if isinstance(job, dict):
+            return job.get("status", JobStatus.COMPLETED)
+        return JobStatus.COMPLETED
     
     async def complete_job(self, job_id: str, result: Any):
         """Mark a job as completed (stub)"""
@@ -173,25 +203,9 @@ class JobService:
         logger.info(f"Cancelling job {job_id} (stub implementation)")
         return True
     
-    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Get a job by ID (stub)"""
-        # Return a default completed job
-        if job_id in self.jobs:
-            return self.jobs[job_id]
-            
-        default_job = {
-            "job_id": job_id,
-            "job_type": "unknown",
-            "status": JobStatus.COMPLETED,
-            "progress": 100,
-            "result": {"message": "Operation completed"},
-            "error": None,
-            "created_at": datetime.utcnow().isoformat(),
-            "started_at": datetime.utcnow().isoformat(),
-            "completed_at": datetime.utcnow().isoformat(),
-            "owner_id": None
-        }
-        return default_job
+    async def get_job(self, job_id: str) -> Optional[Job]:
+        """Retrieve a job object by ID (stub)"""
+        return self.jobs.get(job_id)
     
     def get_jobs(self, 
                owner_id: Optional[str] = None, 
@@ -201,7 +215,7 @@ class JobService:
                offset: int = 0) -> List[Dict[str, Any]]:
         """Get jobs with optional filtering (stub)"""
         # Return an empty list or the stored jobs
-        return list(self.jobs.values())
+        return [job.to_dict() for job in self.jobs.values()]
     
     def check_job_exists(self, job_type: str, params: Dict[str, Any]) -> Optional[str]:
         """Check if a similar job already exists (stub)"""

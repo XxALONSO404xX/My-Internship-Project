@@ -44,6 +44,7 @@ import {
   CardHeader,
   CardBody,
   CardFooter,
+  Select,
 } from '@chakra-ui/react';
 import { FiPlus, FiTrash, FiPlay, FiEye, FiZap, FiClock, FiRefreshCw, FiX } from 'react-icons/fi';
 
@@ -130,8 +131,8 @@ const EmptyRulesState = ({ onAddRule }) => {
 };
 
 // Reusable Rule Card Component
-const RuleCard = ({ rule, onView, onRun, onDelete, onToggle }) => {
-  const cardBg = useColorModeValue('white', 'gray.800');
+const RuleCard = ({ rule, devicesMap, onView, onRun, onDelete, onToggle }) => {
+  const cardBg = useColorModeValue('white', 'gray.700');
   const textColor = useColorModeValue('gray.600', 'gray.300');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   
@@ -143,76 +144,88 @@ const RuleCard = ({ rule, onView, onRun, onDelete, onToggle }) => {
   const statusColor = rule.is_enabled ? 'green.400' : 'gray.400';
   const headerBg = useColorModeValue('gray.50', 'gray.700');
 
+  const glow = useMemo(() => (rule.is_enabled ? '0 0 10px rgba(72,187,120,0.6)' : 'none'), [rule.is_enabled]);
+
+  // Determine target device IDs from various possible fields
+  const targetIds = rule.target_device_ids?.length ? rule.target_device_ids : (
+    rule.device_ids?.length ? rule.device_ids : (rule.target_devices?.map(d => d.id) || [])
+  );
+  const deviceNames = targetIds.map(id => devicesMap[id]).filter(Boolean);
+  const deviceCount = targetIds.length;
+  const deviceLabel = deviceNames.length === 0
+    ? `${deviceCount} devices`
+    : (deviceNames.length > 3 ? `${deviceNames.length} devices` : deviceNames.join(', '));
+
   return (
-    <Card
-      bg={cardBg}
-      borderRadius="xl"
-      boxShadow="lg"
-      h="100%"
-      display="flex"
-      flexDirection="column"
-      _hover={{ transform: 'translateY(-5px)', boxShadow: 'xl' }}
-      transition="all 0.2s ease-in-out"
-      borderWidth="1px"
-      borderColor={borderColor}
-      borderLeftWidth="5px"
-      borderLeftColor={statusColor}
-      overflow="hidden"
-    >
-      <CardHeader 
-        borderBottomWidth="1px" 
-        borderColor={borderColor} 
-        bg={headerBg}
-        py={3}
-        px={4}
-      >
-        <Flex justify="space-between" align="center">
-          <HStack spacing={3} overflow="hidden">
-            <Icon as={rule.rule_type === 'schedule' ? FiClock : FiZap} w={6} h={6} color={accentColor} />
-            <Heading size="md" noOfLines={1} title={rule.name}>{rule.name}</Heading>
-          </HStack>
-          <Switch isChecked={rule.is_enabled} onChange={onToggle} colorScheme="green" />
-        </Flex>
-      </CardHeader>
-      <CardBody flex="1" py={4} px={4}>
-        <Text color={textColor} noOfLines={2} minH="40px">{rule.description || 'No description provided.'}</Text>
-      </CardBody>
-      <CardFooter 
-        display="flex" 
-        flexDirection="column" 
-        mt="auto" 
-        pt={3} 
-        pb={3} 
-        px={4}
-        borderTopWidth="1px"
+    <Box bgGradient="linear(to-br, gray.600 0%, gray.900 100%)" p="1px" borderRadius="2xl" boxShadow={glow} _hover={{ transform: 'translateY(-4px)', boxShadow: 'xl' }} transition="all 0.2s ease-in-out" cursor="pointer" onClick={onView}>
+      <Card
+        bg={cardBg}
+        borderRadius="2xl"
+        h="100%"
+        display="flex"
+        flexDirection="column"
+        borderWidth="1px"
         borderColor={borderColor}
+        overflow="hidden"
       >
-        <HStack spacing={2} mb={3}>
-          <Badge colorScheme={rule.rule_type === 'schedule' ? 'purple' : 'cyan'} variant="subtle">
-            {rule.rule_type.charAt(0).toUpperCase() + rule.rule_type.slice(1)}
-          </Badge>
-          {rule.rule_type === 'schedule' && (
-            <ScheduleBadge schedule={rule.schedule} lastTriggered={rule.last_triggered} />
-          )}
-        </HStack>
-        <ButtonGroup variant="ghost" spacing="1" w="full">
-          <Button leftIcon={<FiEye />} size="sm" onClick={onView} flex="1">Details</Button>
-          <IconButton 
-            icon={<FiPlay />} 
-            onClick={onRun} 
-            aria-label="Run Rule" 
-            isDisabled={!rule.is_enabled}
-            _hover={{ color: useColorModeValue('green.500', 'green.300') }}
-          />
-          <IconButton 
-            icon={<FiTrash />} 
-            onClick={onDelete} 
-            aria-label="Delete Rule" 
-            _hover={{ color: useColorModeValue('red.500', 'red.300') }}
-          />
-        </ButtonGroup>
-      </CardFooter>
-    </Card>
+        <CardHeader 
+          borderBottomWidth="1px" 
+          borderColor={borderColor} 
+          bg={headerBg}
+          py={3}
+          px={4}
+        >
+          <Flex justify="space-between" align="center">
+            <HStack spacing={3} overflow="hidden">
+              <Icon as={rule.rule_type === 'schedule' ? FiClock : FiZap} w={6} h={6} color={accentColor} />
+              <Heading size="md" noOfLines={1} title={rule.name}>{rule.name}</Heading>
+            </HStack>
+            <Switch isChecked={rule.is_enabled} onChange={onToggle} colorScheme="green" />
+          </Flex>
+        </CardHeader>
+        <CardBody flex="1" py={4} px={4}>
+          <Text color={textColor} noOfLines={2} minH="40px">{rule.description || 'No description provided.'}</Text>
+        </CardBody>
+        <CardFooter 
+          display="flex" 
+          flexDirection="column" 
+          mt="auto" 
+          pt={3} 
+          pb={3} 
+          px={4}
+          borderTopWidth="1px"
+          borderColor={borderColor}
+        >
+          <HStack spacing={2} mb={3} wrap="wrap">
+            <Badge colorScheme={rule.rule_type === 'schedule' ? 'purple' : 'cyan'} variant="subtle">
+              {rule.rule_type.charAt(0).toUpperCase() + rule.rule_type.slice(1)}
+            </Badge>
+            {rule.rule_type === 'schedule' && (
+              <ScheduleBadge schedule={rule.schedule} lastTriggered={rule.last_triggered} />
+            )}
+            <Badge colorScheme="blue" variant="subtle" title={deviceNames.length ? deviceNames.join(', ') : 'All devices'}>
+              {deviceLabel}
+            </Badge>
+          </HStack>
+          <ButtonGroup variant="ghost" spacing="1" w="full">
+            <Button leftIcon={<FiEye />} size="sm" onClick={onView} flex="1">Details</Button>
+            <IconButton 
+              icon={<FiPlay />} 
+              onClick={onRun} 
+              aria-label="Run Rule" 
+              isDisabled={!rule.is_enabled}
+              _hover={{ color: useColorModeValue('green.500', 'green.300') }}
+            />
+            <IconButton 
+              icon={<FiTrash />} 
+              onClick={onDelete} 
+              aria-label="Delete Rule" 
+              _hover={{ color: useColorModeValue('red.500', 'red.300') }}
+            />
+          </ButtonGroup>
+        </CardFooter>
+      </Card>
+    </Box>
   );
 };
 
@@ -229,11 +242,23 @@ export default function RulesPage() {
   const [deviceOptions, setDeviceOptions] = useState([]);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState([]);
   const [isEditingDevices, setIsEditingDevices] = useState(false);
-  const devicesMap = useMemo(() => Object.fromEntries(deviceOptions.map(dev => [dev.id, dev.name])), [deviceOptions]);
+  // Map device id and hash_id to device name for quick lookup
+  const devicesMap = useMemo(() => {
+    const pairs = [];
+    deviceOptions.forEach(dev => {
+      if (dev.id !== undefined) pairs.push([String(dev.id), dev.name]);
+      if (dev.hash_id !== undefined) pairs.push([String(dev.hash_id), dev.name]);
+    });
+    return Object.fromEntries(pairs);
+  }, [deviceOptions]);
 
   const [ruleToDelete, setRuleToDelete] = useState(null);
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
   const cancelRef = useRef();
+
+  const [statusFilter, setStatusFilter] = useState('all'); // all | enabled | disabled
+  const [typeFilter, setTypeFilter] = useState('all'); // all | schedule | trigger
+  const [sortOption, setSortOption] = useState('nameAZ'); // nameAZ | nameZA
 
   const fetchRules = useCallback(async () => {
     setIsLoading(true);
@@ -351,9 +376,23 @@ export default function RulesPage() {
     setIsEditingDevices(false);
   }
 
-  const filteredRules = rules.filter(rule =>
-    rule.name.toLowerCase().includes(filterText.toLowerCase())
-  );
+  const displayRules = useMemo(() => {
+    let list = rules.filter(rule => rule.name.toLowerCase().includes(filterText.toLowerCase()));
+
+    // Status filter
+    if (statusFilter === 'enabled') list = list.filter(r => r.is_enabled);
+    else if (statusFilter === 'disabled') list = list.filter(r => !r.is_enabled);
+
+    // Type filter
+    if (typeFilter === 'schedule') list = list.filter(r => r.rule_type === 'schedule');
+    else if (typeFilter === 'trigger') list = list.filter(r => r.rule_type !== 'schedule');
+
+    // Sorting
+    if (sortOption === 'nameAZ') list = list.sort((a, b) => a.name.localeCompare(b.name));
+    else if (sortOption === 'nameZA') list = list.sort((a, b) => b.name.localeCompare(a.name));
+
+    return list;
+  }, [rules, filterText, statusFilter, typeFilter, sortOption]);
   
   const cardBg = useColorModeValue('white', 'gray.700');
 
@@ -394,6 +433,24 @@ export default function RulesPage() {
         focusBorderColor="blue.500"
       />
 
+      {/* Additional Filters */}
+      <HStack spacing={4} mb={8} flexWrap="wrap">
+        <Select w="160px" value={statusFilter} onChange={(e)=>setStatusFilter(e.target.value)} bg={useColorModeValue('white','gray.700')}>
+          <option value="all">All status</option>
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </Select>
+        <Select w="160px" value={typeFilter} onChange={(e)=>setTypeFilter(e.target.value)} bg={useColorModeValue('white','gray.700')}>
+          <option value="all">All types</option>
+          <option value="schedule">Schedule</option>
+          <option value="trigger">Trigger</option>
+        </Select>
+        <Select w="180px" value={sortOption} onChange={(e)=>setSortOption(e.target.value)} bg={useColorModeValue('white','gray.700')}>
+          <option value="nameAZ">Sort: Name A-Z</option>
+          <option value="nameZA">Sort: Name Z-A</option>
+        </Select>
+      </HStack>
+
       <motion.div
         initial="hidden"
         animate="visible"
@@ -408,7 +465,7 @@ export default function RulesPage() {
         <SimpleGrid columns={{ base: 1, md: 2, lg: 3, xl: 4 }} spacing={6}>
           {isLoading
             ? Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} height="320px" borderRadius="xl" />)
-            : filteredRules.length > 0 ? filteredRules.map((rule) => (
+            : displayRules.length > 0 ? displayRules.map((rule) => (
                 <motion.div
                   key={rule.id}
                   variants={{
@@ -419,6 +476,7 @@ export default function RulesPage() {
                 >
                   <RuleCard
                     rule={rule}
+                    devicesMap={devicesMap}
                     onView={() => openDetailModal(rule)}
                     onRun={() => applyRulesToDevice(rule.id)}
                     onDelete={() => handleDeleteClick(rule.id)}
@@ -556,7 +614,14 @@ export default function RulesPage() {
                     )}
                   </HStack>
                   <DetailItem label="Attached Devices">
-                    <Text color={useColorModeValue('gray.700', 'gray.200')}>{selectedRule.device_ids?.map(id => devicesMap[id]).join(', ') || 'None'}</Text>
+                    <Text color={useColorModeValue('gray.700', 'gray.200')}>
+                      {(() => {
+                        const ids = selectedRule.target_device_ids?.length ? selectedRule.target_device_ids : (selectedRule.device_ids?.length ? selectedRule.device_ids : (selectedRule.target_devices?.map(d=>d.id) || []));
+                        if (ids.length === 0) return 'All devices';
+                        const names = ids.map(id => devicesMap[id]).filter(Boolean);
+                        return names.length > 0 ? names.join(', ') : `${ids.length} devices`;
+                      })()}
+                    </Text>
                   </DetailItem>
                 </VStack>
               )}
